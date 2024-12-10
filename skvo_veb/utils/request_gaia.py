@@ -1,0 +1,607 @@
+import logging
+
+from os import getenv
+import astropy.units as u
+# noinspection PyUnresolvedReferences
+from astropy.units import deg, hourangle, day, electron
+import numpy as np
+import pandas as pd
+import psycopg2
+import psycopg2.extensions
+import psycopg2.extras
+from astropy.coordinates import Angle
+from pandas import DataFrame
+
+from skvo_veb.utils.kurve import cook_lightcurve
+from skvo_veb.utils.coord import deg_to_asec, parse_coord_to_skycoord
+from skvo_veb.utils.my_tools import DBException, timeit
+
+path_to_test_data = 'test_data/'
+
+psql_table_photo = 'lightcurves_gaia'
+psql_table_prop_gaia = 'veb_prop_gaia'
+psql_table_prop_new = 'veb_prop_new'
+psql_table_veb_parameters = 'veb_parameters'
+psql_table_main = 'main_gaia_data'
+psql_table_cross_ident = 'cross_ident'
+# psql_table_lamost = 'lamost'
+psql_table_lamost = 'lamost_dr10'
+
+jd0_gaia = 2455197.5
+
+
+@timeit
+def request_coord_cone(coord_str: str, rad_arcmin, catalogue) -> tuple[DataFrame, dict]:
+    """
+    performs cone search of VEB in a local database by ra,dec coordinates within rad_deg circle
+    :param catalogue: Gaia, Tess, Kepler etc.
+    :param coord_str:
+    :param rad_arcmin:
+    :return: found sources as a pandas DataFrame
+    """
+
+    def _main_name(x):
+        return x['vsx'] if x['vsx'] is not None else x['simbad'] if x['simbad'] is not None \
+            else f'Gaia DR3 {x["gaia_id"]}'
+
+    try:
+        sky_coords = parse_coord_to_skycoord(coord_str)
+        ra_deg, dec_deg = sky_coords.ra.deg, sky_coords.dec.deg
+        rows = _request_coord_cone(ra_deg, dec_deg, float(rad_arcmin))
+        if len(rows) == 0:
+            error_str = f'Nothing was found within {rad_arcmin}arc min radius '
+            raise DBException(error_str)
+        df = pd.DataFrame(rows)  # , columns=['id', 'coordequ', 'dist', 'Gmag'])
+        if getenv('DEBUG_LOCAL'):
+            df['Identifier'] = df['gaia_id'].apply(_debug_get_main_identifier)
+        else:
+            # df['Identifier'] = df.vsx if df.vsx is not None else df.simbad if df.simbad is not None else 'Gaia DR3
+            # '+ df["gaia_id"].astype('string')
+            df['Identifier'] = df[['simbad', 'vsx', 'gaia_id']].apply(_main_name, axis=1)
+            df.dist = deg_to_asec(df.dist)
+
+        # df['coordequ'] = df['coordequ'].apply(coord.coordequ_to_hms_dms_str, args=[1])
+        df['ra'] = Angle(df.ra, unit=u.rad).to_string(unit=hourangle, sep=':', pad=True, precision=1)
+        df['dec'] = Angle(df.dec, unit=u.rad).to_string(unit=deg, sep=':', alwayssign=True, pad=True, precision=1)
+        df['RA DEC'] = df['ra'] + ' ' + df['dec']
+        df.drop(['ra', 'dec'], axis=1, inplace=True)
+        # df.rename(columns={'coordequ': 'RA DEC', 'g_mag': 'Mag G'}, inplace=True)
+        df.rename(columns={'g_mag': 'Mag G'}, inplace=True)
+
+        tooltip_di = {'RA DEC': 'ICRS coordinates [hms, dms]',
+                      'dist': 'distance from the centre [asec]', 'Mag G': 'magnitude'}
+
+        df['catalogue'] = catalogue  # todo This is a stub Use catalogue into the DB request
+        # todo "df.astype" -- trick against truncating long integer in the dash table
+        logging.debug(f'--- request_coord_cone stop len = {len(df)}')
+        return df.astype({'gaia_id': 'string'}), tooltip_di
+        # todo Can I perform this smarter?
+        # https://community.plotly.com/t/dash-datatable-large-number-formatting/53085
+    except Exception as e:
+        # raise DBException(e)
+        logging.info(e)
+        raise
+
+
+@timeit
+def extract_gaia_id(source_id: str):
+    if getenv('DEBUG_LOCAL'):
+        return 1234567
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST"),
+        dbname=getenv("DB_NAME"),
+        user=getenv("DB_USER"),
+        password=getenv("DB_PASS")
+    )
+    cursor = conn.cursor()
+    name = '%' + '%'.join(source_id.split())
+    # name = source_id.strip().replace(' ', '%')
+    # psql_str = (f'select gaia_id,simbad,vsx from {psql_table_cross_ident} '
+    #             f'where simbad ilike \'{name}\' or vsx ilike \'{name}\'')
+    psql_str = (f'select gaia_id,simbad,vsx from {psql_table_cross_ident} '
+                f'where simbad ilike %s or vsx ilike %s')
+    cursor.execute(psql_str, (name, name))
+    rows = cursor.fetchall()
+    conn.commit()
+    if len(rows) < 1:
+        return None
+    elif len(rows) > 1:
+        list_of_id = [row[0] for row in rows]
+        n_max = 10
+        raise DBException(f'Ambiguous query: did you mean one of Gaia DR3 {list_of_id[:n_max]} stars?')
+    return rows[0][0]
+
+
+@timeit
+def _request_coord_cone(ra_deg: float, dec_deg: float, rad_arcmin: float):
+    psql_str1 = f'select set_sphere_output(\'RAD\')'
+
+    psql_str2 = (f'select m.gaia_id as gaia_id, long(coordequ) as ra, lat(coordequ) as dec, coordequ <-> '
+                 f'spoint \'(%sd,%sd)\' as dist,'
+                 f'g_mag, vsx, simbad '
+                 f'from {psql_table_main} as m join {psql_table_cross_ident} as ci on m.gaia_id = ci.gaia_id '
+                 f'where coordequ <@ scircle '
+                 f'\'<(%sd,%sd),%sd>\' order by dist')
+
+    if getenv('DEBUG_LOCAL'):
+        return _debug_load_test_cone()
+
+    logging.error(f'_request_coord_cone host={getenv("DB_HOST")} '
+                  f'dbname={getenv("DB_NAME")} '
+                  f'user={getenv("DB_USER")} '
+                  f'password= {getenv("DB_PASS")}')
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST"),
+        dbname=getenv("DB_NAME"),
+        user=getenv("DB_USER"),
+        password=getenv("DB_PASS")
+    )
+
+    logging.error('after conn')
+    cursor_di = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)  # returns results as a dictionary
+    cursor_di.execute(psql_str1)
+    _ = cursor_di.fetchall()
+    cursor_di.execute(psql_str2, (ra_deg, dec_deg, ra_deg, dec_deg, rad_arcmin / 60))
+    rows_di = cursor_di.fetchall()
+    # column_names = [descr.name for descr in cursor.description]
+    # pd.DataFrame(rows, columns=column_names)
+    return rows_di
+
+
+@timeit
+def _request_cross_ident(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -> dict:
+    # cursor.execute(f'select gaia_id,simbad,vsx from {psql_table_cross_ident} where gaia_id = {gaia_id}')
+    cursor.execute(f'select gaia_id,simbad,vsx from {psql_table_cross_ident} where gaia_id = %s', (gaia_id,))
+    row = cursor.fetchone()
+    if row is None:
+        return {'gaia_id': gaia_id, 'simbad': None, 'vsx': None}
+    return dict(row)
+
+
+@timeit
+def _request_veb_prop_gaia(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -> dict:
+    # cursor.execute(f'select * from {psql_table_prop_gaia} where gaia_id = {gaia_id}')
+    cursor.execute(f'select * from {psql_table_prop_gaia} where gaia_id = %s', (gaia_id,))
+    # column_names = [descr.name for descr in cursor.description]
+    row = cursor.fetchone()
+    if row is None:
+        raise DBException(f'The source with {gaia_id=} not found in {psql_table_prop_gaia}')
+    return dict(row)
+
+
+def _request_lamost(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -> dict:
+    # todo
+    # cursor.execute(f'select * from {psql_table_lamost} where gaia_id = {gaia_id}')
+    cursor.execute(f'select * from {psql_table_lamost} where gaia_id = %s', (gaia_id,))
+    # column_names = [descr.name for descr in cursor.description]
+    row = cursor.fetchone()
+    if row is None:
+        logging.warning(f'The source with {gaia_id=} not found in {psql_table_lamost}')
+        return {}
+    return dict(row)
+
+
+@timeit
+def request_photometric_params_image(gaia_id: int) -> str:  # 2024355117565654016
+    import base64
+    if getenv('DEBUG_LOCAL'):
+        return _debug_photometric_params_image(gaia_id)  # todo DEBUG
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST"),
+        dbname=getenv("DB_NAME"),
+        user=getenv("DB_USER"),
+        password=getenv("DB_PASS")
+    )
+    cursor = conn.cursor()
+    # cursor.execute(f'select gaia_id, graph from {psql_table_prop_new} where gaia_id = {gaia_id}')
+    cursor.execute(f'select gaia_id, graph from {psql_table_prop_new} where gaia_id = %s', (gaia_id,))
+    row = cursor.fetchone()
+    try:
+        image_bin = row[1]
+    except Exception as e:
+        conn.commit()
+        logging.warning(f'request_photometric_params_image exception: {e}')
+        raise DBException(f'The graph of {gaia_id=} not found in {psql_table_prop_new} table')
+    finally:
+        conn.commit()
+    return 'data:image/png;base64,' + base64.b64encode(image_bin).decode('utf-8')
+
+
+@timeit
+def _request_veb_prop_new(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -> dict:  # 2024355117565654016
+    # cursor.execute(f'select gaia_id, spot, type, time_ref, predicted, fitted, absolute from {psql_table_prop_new} '
+    #                f'where gaia_id = {gaia_id}')
+    cursor.execute(f'select gaia_id, spot, type, time_ref, predicted, fitted, absolute from {psql_table_prop_new} '
+                   f'where gaia_id = %s', (gaia_id,))
+    row = cursor.fetchone()
+    if row is None:
+        logging.warning(f'The source with {gaia_id=} not found in {psql_table_prop_new}')
+        return {}
+    return dict(row)
+
+
+@timeit
+def request_photometric_params_description() -> dict:
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST"),
+        dbname=getenv("DB_NAME"),
+        user=getenv("DB_USER"),
+        password=getenv("DB_PASS")
+    )
+    cursor_di = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    cursor_di.execute(f'select * from {psql_table_veb_parameters}')
+    rows = cursor_di.fetchall()
+    conn.commit()
+    di = dict([(r['name'], (r['description'], r['unit'])) for r in rows])
+    return di
+
+
+@timeit
+def _request_main_data(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -> dict:
+    # cursor.execute(f'select * from {psql_table_main} where gaia_id = {gaia_id}')
+    cursor.execute(f'select * from {psql_table_main} where gaia_id = %s', (gaia_id,))
+    # column_names = [descr.name for descr in cursor.description]
+    row = cursor.fetchone()
+    if row is None:
+        raise DBException(f'The source with {gaia_id=} not found in {psql_table_main}')
+    return dict(row)
+
+
+def _request_lightcurve_with_metadata(gaia_id: int, band: str) -> dict:
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST"),
+        dbname=getenv("DB_NAME"),
+        user=getenv("DB_USER"),
+        password=getenv("DB_PASS")
+    )
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    # -----------------------------  Extract the variable's freq from the gaia prop table -----------------
+    metadata = _request_fold_params(gaia_id, cursor)
+
+    metadata['band'] = band
+    metadata['gaia_id'] = gaia_id
+
+    cross_ident = _request_cross_ident(gaia_id, cursor)
+    metadata['cross_ident'] = cross_ident
+
+    #  ------------------------------ Request photometric data --------------------------------------------
+    # We need period and epoch to fold the lightcurve
+    epoch = metadata.get('epoch_gaia', None)
+    period = metadata.get('period', None)
+    lightcurve = _request_lightcurve(gaia_id, band, cursor, epoch, period)
+
+    conn.commit()
+    return dict(metadata=metadata, lightcurve=lightcurve)
+
+
+@timeit
+def _request_fold_params(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -> dict:
+    # cursor.execute(f'select freq, time_ref  from {psql_table_prop_gaia} where gaia_id = {gaia_id}')
+    cursor.execute(f'select freq, time_ref  from {psql_table_prop_gaia} where gaia_id = %s', (gaia_id,))
+    row_gaia = cursor.fetchone()
+    if row_gaia is None:
+        raise DBException(f'The source with {gaia_id=} not found in {psql_table_prop_gaia}')
+    try:
+        epoch_gaia = float(row_gaia['time_ref']) + jd0_gaia
+    except Exception as e:
+        logging.warning(repr(e))
+        epoch_gaia = None
+
+    try:
+        freq = row_gaia['freq']
+        period = 1 / freq
+        period_unit = str(day)
+    except Exception as e:
+        logging.warning(repr(e))
+        period = None
+        period_unit = None
+
+    # cursor.execute(f'select time_ref  from {psql_table_prop_new} where gaia_id = {gaia_id}')
+    cursor.execute(f'select time_ref  from {psql_table_prop_new} where gaia_id = %s', (gaia_id,))
+    row_new = cursor.fetchone()
+    epoch_new = None
+    if row_new is not None:
+        try:
+            epoch_new = float(row_new['time_ref']) + jd0_gaia
+        except Exception as e:
+            logging.warning(repr(e))
+
+    return {'epoch_gaia': epoch_gaia, 'epoch_new': epoch_new, 'epoch': epoch_gaia,
+            'period': period, 'period_unit': period_unit}
+
+
+@timeit
+def _request_lightcurve(gaia_id: int, band: str, cursor: psycopg2.extras.RealDictCursor,
+                        epoch_jd: float | None, period_day: float | None) -> dict:
+    # cursor.execute(f'select jdobs,flux,flux_err  from {psql_table_photo} where gaia_id = {gaia_id} '
+    #                f'and band ilike \'{band}\'')
+    cursor.execute(f'select jdobs,flux,flux_err  from {psql_table_photo} where gaia_id = %s '
+                   f'and band ilike %s', (gaia_id, band))
+    rows = cursor.fetchall()  # list of dictionaries
+    if len(rows) < 1:
+        raise DBException(f'The lightcurve in {band}-band of source with {gaia_id=} not found in {psql_table_photo}')
+    try:
+        df = pd.DataFrame(rows)
+        df['jdobs'] += jd0_gaia
+        df.rename(columns={'jdobs': 'jd'}, inplace=True)
+        lightcurve = cook_lightcurve(df, timescale='tcb',
+                                     flux_unit=str(electron / u.s),
+                                     flux_err_unit=str(electron / u.s),
+                                     epoch_jd=epoch_jd, period_day=period_day)
+    except Exception as e:
+        error_str = f'An exception connected with lightcurve of {gaia_id} occurred: {repr(e)}'
+        logging.warning(error_str)
+        raise DBException(error_str)
+    return lightcurve
+
+
+def _debug_get_main_identifier(gaia_id: int) -> str:
+    vsx, simbad = _debug_get_synonym(gaia_id)
+    res = vsx if vsx is not None else simbad if simbad is not None else f'Gaia DR3 {gaia_id}'
+    return res
+
+
+def _debug_load_lightcurve_with_metadata(gaia_id, band) -> dict:
+    band = band.upper()
+    filename_lc = f'{path_to_test_data}{gaia_id}_{band}_gaia.dat'
+    period = None
+    period_unit = None
+    try:
+        with open(filename_lc, 'r') as f:
+            head = f.readline()
+        if len(head) > 0 and head[0] == '#':
+            try:
+                period = float(head.rstrip().split('=')[-1])
+                period_unit = str(day)
+            except Exception as e:
+                logging.warning(repr(e))
+        lc_arr = np.loadtxt(filename_lc)
+        df = pd.DataFrame(columns=['jdobs', 'flux', 'flux_err'], data=lc_arr)
+        df['jdobs'] += jd0_gaia
+        df.rename(columns={'jdobs': 'jd'}, inplace=True)
+
+        dict_prop_gaia = _debug_load_gaia_params(gaia_id)
+        try:
+            epoch_gaia = float(dict_prop_gaia['time_ref']) + jd0_gaia
+        except Exception as e:
+            logging.warning(repr(e))
+            epoch_gaia = None
+        epoch_new = epoch_gaia - 0.1
+        lightcurve = cook_lightcurve(df, timescale='tcb',
+                                     flux_unit=str(electron / u.s),
+                                     flux_err_unit=str(electron / u.s),
+                                     epoch_jd=epoch_gaia, period_day=period)
+
+        cross_ident = _debug_load_cross_ident(gaia_id)
+
+    except FileNotFoundError:
+        raise DBException(f'Seems like we don\'t have debug data for {gaia_id=} {band=}')
+
+    return dict(lightcurve=lightcurve,
+                metadata=dict(gaia_id=gaia_id, period=period, period_unit=period_unit,
+                              epoch_gaia=epoch_gaia, epoch_new=epoch_new, band=band,
+                              cross_ident=cross_ident))
+
+
+def _debug_load_main_data(gaia_id=5284186916701857536) -> dict:  # todo This is a debug method
+    import csv
+    # import itertools
+    filename_csv = f'{path_to_test_data}/main_gaia_data_{gaia_id}.csv'
+    try:
+        with open(filename_csv) as f:
+            csv_reader = csv.reader(f)
+            row_header = next(csv_reader)
+            row = next(csv_reader)
+            df = pd.DataFrame([row], columns=row_header)
+    except FileNotFoundError:
+        raise DBException(f'Seems like we have not debug data for {gaia_id=}')
+    return df.to_dict(orient='records')[0]
+
+
+def _debug_load_test_cone(gaia_id=5284186916701857536):  # todo This is a debug method
+    import csv
+    filename_csv = f'{path_to_test_data}/circle_02_{gaia_id}.csv'
+    rows = []
+    with open(filename_csv) as f:
+        csv_reader = csv.reader(f)
+        _ = next(csv_reader)  # header
+
+        for row in csv_reader:
+            di = {}
+            di['gaia_id'], coordequ, di['dist'], di['g_mag'], di['vsx'], di['simbad'] = row
+            di['ra'], di['dec'] = eval(coordequ)
+            # row[2] = float(row[2])
+            # row[3] = float(row[3])
+            rows.append(di)
+    return rows
+
+
+def _debug_get_synonym(gaia_id):
+    import csv
+    filename_csv = f'{path_to_test_data}/synonyms.csv'
+    dict_synonyms = {}
+    with open(filename_csv) as f:
+        csv_reader = csv.reader(f)
+        _ = next(csv_reader)  # header
+        for row in csv_reader:
+            dict_synonyms[row[0]] = row[1:3]
+    res = [None if v == '' else v for v in dict_synonyms[gaia_id]]
+    return res
+
+
+def _debug_load_cross_ident(gaia_id):
+    print(f'Does not matter {gaia_id} in debug mode')
+    return {'gaia_id': gaia_id, 'vsx': None, 'simbad': f'Gaia DR3 {gaia_id}'}
+
+
+def _debug_load_gaia_params(gaia_id=5284186916701857536) -> dict:  # todo This is a debug method
+    import csv
+    filename_csv = f'{path_to_test_data}/veb_prop_gaia_{gaia_id}.csv'
+    with open(filename_csv) as f:
+        csv_reader = csv.reader(f)
+        row_header = next(csv_reader)
+        row = next(csv_reader)
+    dict_prop_gaia = {}
+    for key, value in zip(row_header, row):
+        dict_prop_gaia[key] = value
+    return dict_prop_gaia
+
+
+def _debug_load_lamost(gaia_id) -> dict:  # todo This is a debug method
+    # gaia_id = 48158579233356928
+    # gaia_id = 1000119251255360896
+    gaia_id_dummy = 1000332964531901824
+    logging.info(f'Debug mode: substitute {gaia_id=} for the dummy {gaia_id_dummy=}')
+    gaia_id = gaia_id_dummy
+    _psql_table_name = 'lamost'
+
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST_DEBUG"),
+        dbname=getenv("DB_NAME_DEBUG"),
+        user=getenv("DB_USER_DEBUG"),
+        password=getenv("DB_PASS_DEBUG")
+    )
+
+    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    # cursor.execute(f'select * from {_psql_table_name} where gaia_id = {gaia_id}')
+    cursor.execute(f'select * from {_psql_table_name} where gaia_id = %s', (gaia_id,))
+    row_dict = cursor.fetchone()
+    conn.commit()
+    return row_dict
+
+
+def _debug_split_json_prop_new(json_filename_full: str) -> (int, float, bool, str, str, dict, dict, dict):
+    import json
+    with open(json_filename_full, 'r') as f:
+        jdict = json.load(f)
+    jdict_predicted = {}
+    jdict_fitted = {}
+    jdict_abs = {}
+    for key in jdict.keys():
+        if key in ['star_id', 'ra_icrs', 'de_icrs', 'gmag', 'plx', 'e_plx', 'period',
+                   'time_ref', 'time_ref_orig', 'spot', 'image', 'type']:
+            continue
+        if key.startswith('predicted_'):
+            key_p = key.replace('predicted_', '')
+            jdict_predicted[key_p] = jdict[key]
+        elif key not in ['M1', 'M2', 'R1', 'R2', 'L1', 'L2', 'a']:
+            jdict_fitted[key] = jdict[key]
+        else:
+            jdict_abs[key] = jdict[key]
+
+    return (jdict['star_id'], jdict['time_ref'], jdict['spot'], jdict['type'], jdict['image'],
+            jdict_predicted, jdict_fitted, jdict_abs)
+
+
+def _debug_load_photometric_params(gaia_id) -> dict:
+    print(f'{gaia_id=} does not matter here')
+    gaia_id = 1000890283783933312
+    json_filename_full = f'{path_to_test_data}{gaia_id}_p.json'
+    gaia_id, time_ref, spot, eb_type, path_to_image, jdict_predicted, jdict_fitted, jdict_abs = (
+        _debug_split_json_prop_new(json_filename_full))
+    print(gaia_id)
+    dict_prop_new = {
+        'gaia_id': gaia_id,
+        'spot': spot,
+        'type': eb_type,
+        'time_ref': time_ref + jd0_gaia,
+        'predicted': jdict_predicted,
+        'fitted': jdict_fitted,
+        'absolute': jdict_abs
+    }
+    return dict_prop_new
+
+
+def _debug_photometric_params_image(gaia_id):
+    print(f'{gaia_id=} does not matter here')
+    gaia_id = 12345
+    import base64
+    _psql_table_name = 'veb_prop_new'
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST_DEBUG"),
+        dbname=getenv("DB_NAME_DEBUG"),
+        user=getenv("DB_USER_DEBUG"),
+        password=getenv("DB_PASS_DEBUG")
+    )
+    cursor = conn.cursor()
+    # cursor.execute(f'select gaia_id,graph from {_psql_table_name} where gaia_id = {gaia_id}')
+    cursor.execute(f'select gaia_id,graph from {_psql_table_name} where gaia_id = %s', (gaia_id,))
+    row = cursor.fetchone()
+    try:
+        image_bin = row[1]
+    except Exception as e:
+        logging.warning(repr(e))
+        raise RuntimeError(f'The properties of {gaia_id=} not found in {_psql_table_name} table (may be)')
+    finally:
+        conn.commit()
+    return 'data:image/png;base64,' + base64.b64encode(image_bin).decode('utf-8')
+
+
+# ------------------- END of debug part ------------------------
+
+def _load_source_data(gaia_id):
+    conn = psycopg2.connect(
+        host=getenv("DB_HOST"),
+        dbname=getenv("DB_NAME"),
+        user=getenv("DB_USER"),
+        password=getenv("DB_PASS")
+    )
+    cursor_di = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    jdict_main = _request_main_data(gaia_id, cursor_di)
+    jdict_prop_gaia = _request_veb_prop_gaia(gaia_id, cursor_di)
+    jdict_prop_new = _request_veb_prop_new(gaia_id, cursor_di)
+    jdict_cross_ident = _request_cross_ident(gaia_id, cursor_di)
+    jdict_lamost = _request_lamost(gaia_id, cursor_di)
+    conn.commit()
+    return jdict_main, jdict_prop_gaia, jdict_prop_new, jdict_cross_ident, jdict_lamost
+
+
+def load_source(gaia_id: int) -> dict:
+    try:
+        gaia_id_int = int(gaia_id)
+    except (ValueError, TypeError):
+        error_str = f'Gaia ID must be an integer, got {type(gaia_id)} instead'
+        raise DBException(error_str)
+    if getenv('DEBUG_LOCAL'):
+        jdict_main = _debug_load_main_data(gaia_id_int)
+        jdict_gaia_params = _debug_load_gaia_params(gaia_id)
+        jdict_photometric_params = _debug_load_photometric_params(gaia_id)
+        jdict_cross_ident = _debug_load_cross_ident(gaia_id)
+        jdict_lamost = _debug_load_lamost(gaia_id)
+    else:
+        (jdict_main, jdict_gaia_params, jdict_photometric_params,
+         jdict_cross_ident, jdict_lamost) = _load_source_data(gaia_id_int)
+        # jdict_lamost = {}  # todo !
+    # Convert or add appropriate units:
+    # https://gea.esac.esa.int/archive/documentation/GDR3/Gaia_archive/chap_datamodel/sec_dm_photometry/ssec_dm_epoch_photometry.html
+    return dict(jdict_main=jdict_main, jdict_gaia_params=jdict_gaia_params,
+                jdict_photometric_params=jdict_photometric_params,
+                jdict_cross_ident=jdict_cross_ident, jdict_lamost=jdict_lamost)
+
+
+def load_gaia_lightcurve(gaia_id: int, band: str) -> dict:
+    # todo: add into metadata the source name and band. And, m.b., fold-data?
+    # todo: Yes, and fold-data
+    try:
+        gaia_id_int = int(gaia_id)
+    except (ValueError, TypeError):
+        error_str = f'Gaia ID must be an integer, got {type(gaia_id)} instead'
+        raise DBException(error_str)
+
+    if getenv('DEBUG_LOCAL'):
+        return _debug_load_lightcurve_with_metadata(gaia_id_int, band)
+    else:
+        return _request_lightcurve_with_metadata(gaia_id, band)
+
+
+if __name__ == '__main__':
+    #    res = request_coord_cone('91.4 -66.5', 0.2)
+    request_photometric_params_description()
+    request_coord_cone('20 54 05.689 +37 01 17.38', 0.2, 'Gaia')
+    gaia_name_test = 5284186916701857536
+    band_test_gaia = 'G'
+    # band_test_gaia = 'BP'
+    res_ = load_source(gaia_name_test)
+    print(res_)
+    di_p_g = _debug_load_gaia_params()
+    print(di_p_g)
