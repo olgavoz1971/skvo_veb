@@ -82,6 +82,7 @@ def _safe_round(value: float | None, precision: float | None) -> str:
 def summary(jdict_main_data: dict, jdict_cross_ident: dict):  # todo add lamost data
     try:
         name = f'Gaia DR3 {jdict_main_data["gaia_id"]}'
+        synonyms = []
         sky_coords = coord.coordequ_to_skycoord(jdict_main_data["coordequ"])
         coord_hms_dms = coord.skycoord_to_hms_dms(sky_coords, precision=1)
         coord_dms_dms = coord.skycoord_to_dms_dms(sky_coords, precision=1)
@@ -98,17 +99,23 @@ def summary(jdict_main_data: dict, jdict_cross_ident: dict):  # todo add lamost 
         logg = _str_to_float(jdict_main_data.get("logg", None))
         fe2h = _str_to_float(jdict_main_data.get("fe2h", None))
 
-        if jdict_cross_ident["simbad"] is not None:
-            name += f'  {jdict_cross_ident["simbad"]}'
+        if jdict_cross_ident["simbad"] is not None and jdict_cross_ident["simbad"] != name:
+            synonyms.append(f'{jdict_cross_ident["simbad"]}')
 
         if jdict_cross_ident["vsx"] is not None and jdict_cross_ident["vsx"] != jdict_cross_ident["simbad"]:
-            name += f'  {jdict_cross_ident["vsx"]}  '
-
+            synonyms.append(f'{jdict_cross_ident["vsx"]}')
+                
         text = '|||\n|:---|:---|\n'  # Markdown table
 
-        text += (f'|**Names:**|{name}|\n'
-                 f'|**ICRS coord**:|**{coord_hms_dms}**|\n'
-                 f'|               |{coord_dms_dms}|\n')
+        text += f'|**Names:**|{name}|\n'
+
+        # Add synonyms if they exist
+        for syn in synonyms:
+            text += f'||{syn}|\n'
+        
+        text += f'|**ICRS coord:**|**{coord_hms_dms}**|\n'
+        text += f'||{coord_dms_dms}|\n'
+        
         mag_prec = 3
         if g_mag is not None:
             text += f'|**Fluxes**:|**Gmag**={_safe_round(g_mag, mag_prec)} \[{_safe_round(g_mag_err, mag_prec)}\]|\n'
@@ -118,13 +125,6 @@ def summary(jdict_main_data: dict, jdict_cross_ident: dict):  # todo add lamost 
             text += f'||**Bp**={_safe_round(bp_mag, mag_prec)} \[{_safe_round(bp_mag_err, mag_prec)}\]|\n'
         if rp_mag is not None:
             text += f'||**Rp**={_safe_round(rp_mag, mag_prec)} \[{_safe_round(rp_mag_err, mag_prec)}\]|\n'
-
-        # text += (f'|**Names:**|{name}|\n'
-        #          f'|**ICRS coord**:|**{coord_hms_dms}**|\n'
-        #          f'|               |{coord_dms_dms}|\n'
-        #          f'|**Fluxes**:|**Gmag**={g_mag:.3f} \[{g_mag_err}\]|\n'
-        #          f'||**Bp**={bp_mag:.3f} \[{bp_mag_err}\]|\n'
-        #          f'||**Rp**={rp_mag:.3f} \[{rp_mag_err}\]|\n')
 
         for name, val, err, prec in zip(['Parallax(mas)', 'Teff', 'Logg', 'Fe/H'],
                                         [parallax, teff, logg, fe2h],
@@ -205,7 +205,9 @@ def layout(source_id=None, catalogue=None):
         if lamost_link_low is not None:
             links_text += f'[LAMOST low-res spectrum]({lamost_link_low})'
         content = dbc.Container([
+            html.Br(),
             html.H1(f'{source_name}', className="text-primary text-left fs-3"),
+            html.Br(),
             dbc.Row([
                 dbc.Col([
                     dbc.Stack([

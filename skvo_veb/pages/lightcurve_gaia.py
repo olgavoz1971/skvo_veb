@@ -46,7 +46,9 @@ def layout(source_id=None, band='G'):
     res = dbc.Container([
         dcc.Store(id='store-gaia-lightcurve'),
         dcc.Store(id='store-gaia-metadata'),
+        html.Br(),
         header,
+        html.Br(),
         dbc.Row([
             dbc.Col([
                 dbc.Stack([

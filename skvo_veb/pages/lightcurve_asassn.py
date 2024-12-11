@@ -47,7 +47,9 @@ def layout(source_id=None, band='g'):
     res = dbc.Container([
         dcc.Store(id='store-asassn-lightcurve'),
         dcc.Store(id='store-asassn-metadata'),
+        html.Br(),
         header,
+        html.Br(),
         dbc.Row([
             dbc.Col([
                 dbc.Stack([

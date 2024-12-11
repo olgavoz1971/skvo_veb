@@ -11,7 +11,7 @@ from astropy.table import Table
 
 from astropy.stats import sigma_clipped_stats
 
-from dash import dcc, html, Input, Output, State, register_page, callback
+from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback
 import plotly.express as px
 import plotly.graph_objects as go
 import dash
@@ -25,7 +25,8 @@ from lightkurve.correctors import PLDCorrector
 import aladin_lite_react_component
 
 # TESS stuff
-from skvo_veb.utils import tess_cache as cache
+from skvo_veb.utils import tess_cache as cache, handler, kurve
+from skvo_veb.utils.my_tools import PipeException
 
 register_page(__name__, name='TESS',
               path='/igebc/tess',
@@ -81,7 +82,7 @@ def imshow_logscale(img, scale_method=None, gamma=0.99, **kwargs):
     val_range = val_max - val_min
     left = val_min
     left = left if left > 0 else img_true_min
-    right = val_max+val_range/100
+    right = val_max + val_range / 100
     right = right if right > 0 else img_true_min
     locator = ticker.MaxNLocator(nbins=5)
     TICKS_VALS = np.array(locator.tick_values(left, right))
@@ -102,7 +103,7 @@ def imshow_logscale(img, scale_method=None, gamma=0.99, **kwargs):
             ticktext=ticks_text,
         ),
     )
-    fig.data[0]['customdata'] = img     # store here not-logarithmic values
+    fig.data[0]['customdata'] = img  # store here not-logarithmic values
     fig.data[0]['hovertemplate'] = '%{customdata:.0f}<extra></extra>'
     return fig
 
@@ -126,13 +127,13 @@ def layout():
                     dcc.Input(id='dec_tess_input', persistence=True, type='text', style={'width': '100%'}),
                 ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                 dbc.Stack([
-                    dbc.Label('Radius', html_for='size_input', style={'width': '7em'}),
+                    dbc.Label('Radius', html_for='radius_tess_input', style={'width': '7em'}),
                     dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
                               style={'width': '100%'}),
                 ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                 dbc.Stack([
-                    dbc.Label('Size', html_for='size_input', style={'width': '7em'}),
-                    dcc.Input(id='size_tess_input', persistence=True, type='number', min=1, value=11,
+                    dbc.Label('Size', html_for='size_ffi_input', style={'width': '7em'}),
+                    dcc.Input(id='size_ffi_input', persistence=True, type='number', min=1, value=11,
                               style={'width': '100%'}),
                 ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
 
@@ -162,6 +163,16 @@ def layout():
                                 width=6),
                         dbc.Col(dbc.Button('Compare', id='plot_difference_button', size="sm", style={'width': '100%'}),
                                 width=6),
+                    ], style={'marginBottom': '5px'}),
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Stack([
+                                dbc.Select(options=handler.get_format_list(), value=handler.get_format_list()[0],
+                                           id='select_tess_format'),
+                                dbc.Button('Download', id='btn_download_tess_lc', size="sm",
+                                           style={'width': '100%'}),
+                            ], direction='horizontal', gap=2)
+                        ], md=12, sm=12),  # select a format
                     ], style={'marginBottom': '5px'}),
                     dbc.Row([
                         dbc.Col([
@@ -311,9 +322,13 @@ def layout():
             )
         ], id="table_tess_row", style={"display": "none"}),  # The Table is here
         dcc.Store(id='mask_store'),
+        dcc.Store(id='mask_slow_store'),
+        dcc.Store(id='mask_fast_store'),
         dcc.Store(id='wcs_store'),
-        dcc.Store(id='lc1_store'),
+        dcc.Store(id='store_tess_lightcurve'),
+        dcc.Store(id='store_tess_metadata'),
         dcc.Store(id='lc2_store'),
+        dcc.Download(id='download_tess_lc'),
     ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column', 'height': '100vh'})
 
 
@@ -450,25 +465,30 @@ def subtract_background_inplace(tpf):  # todo It doesn't work this way (in place
      State('search_tess_switch', 'value'),
      State('radius_tess_input', 'value'),
      State('sector_drop', 'value'),
-     State('size_tess_input', 'value'),
+     State('size_ffi_input', 'value'),
      State('thresh_input', 'value'),
      State('sum_switch', 'value'),
-     State('mask_switch', 'value')],
+     State('mask_switch', 'value'),
+     State('auto_mask_switch', 'value')],
     prevent_initial_call=True
 )
 def plot_pixel(n_clicks, gamma, pixel_type, obj_name, ra, dec, search_type, radius, sector, size, threshold, sum_it,
-               mask_type):
+               mask_type, auto_mask):
     if n_clicks is None:
         raise PreventUpdate
 
     target, pixel_data = search_pixel_data(pixel_type=pixel_type, obj_name=obj_name, ra=ra, dec=dec,
                                            search_type=search_type, radius=radius, sector=sector, size=size)
-    if mask_type == 'pipeline':
-        mask = pixel_data.pipeline_mask
-    else:
-        mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel='center')
+
+    px_shape = pixel_data.shape[1:]
+    mask = np.full(px_shape, False)
+    if auto_mask:
+        mask = (
+            pixel_data.pipeline_mask if mask_type == "pipeline"
+            else pixel_data.create_threshold_mask(threshold=threshold, reference_pixel="center")
+        )
     mask_shapes = create_shapes(mask)
-    # log = False
+
     if sum_it:
         logging.debug(f'Sum {len(pixel_data.flux)}')
         # data_to_show = log_gamma(np.sum(pixel_data.flux[:], axis=0), log=log)
@@ -496,14 +516,45 @@ def plot_pixel(n_clicks, gamma, pixel_type, obj_name, ra, dec, search_type, radi
     return fig, mask.tolist(), wcs_di
 
 
+# Synchronize masks
+clientside_callback(
+    """
+    function synchronizeMasksTriggerSlow(slowMask) {
+        console.log("Synchronizing masks... Trigger = Slow");
+        if (!slowMask) {
+            window.dash_clientside.no_update;
+        }
+        return slowMask;
+    }
+    """,
+    Output("mask_store", "data", allow_duplicate=True),
+    Input("mask_slow_store", "data"),
+    prevent_initial_call=True
+)
+clientside_callback(
+    """
+    function synchronizeMasksTriggerFast(fastMask) {
+        if (!fastMask) {
+            window.dash_clientside.no_update;
+        }
+        return fastMask;
+    }
+    """,
+    Output("mask_store", "data", allow_duplicate=True),
+    Input("mask_fast_store", "data"),
+    prevent_initial_call=True
+)
+
+
+# @callback(
+#     [# Output("px_tess_graph", "figure", allow_duplicate=True),
+#      # Output('mask_store', 'data', allow_duplicate=True),
 @callback(
-    [Output("px_tess_graph", "figure", allow_duplicate=True),
-     Output('mask_store', 'data', allow_duplicate=True),
-     Output('aladin_tess', 'target', allow_duplicate=True)],
+    Output('aladin_tess', 'target', allow_duplicate=True),
+    Output('mask_slow_store', 'data', allow_duplicate=True),
     [Input("px_tess_graph", "clickData"),
      State("px_tess_graph", "figure"),
      State('auto_mask_switch', 'value'),
-     State('mask_store', 'data'),
      State('ffi_tpf_switch', 'value'),
      State('obj_name_tess_input', 'value'),
      State('ra_tess_input', 'value'),
@@ -511,42 +562,133 @@ def plot_pixel(n_clicks, gamma, pixel_type, obj_name, ra, dec, search_type, radi
      State('search_tess_switch', 'value'),
      State('radius_tess_input', 'value'),
      State('sector_drop', 'value'),
-     State('size_tess_input', 'value'),
+     State('size_ffi_input', 'value'),
      State('thresh_input', 'value')],
     prevent_initial_call=True,
 )
-def update_mask(clickData, fig, auto_mask, mask_list,
+def create_mask(clickData, fig, auto_mask,
                 pixel_type, obj_name, ra, dec, search_type, radius, sector, size, threshold):
-    logging.debug(f'update_mask: {clickData}')
+    if not auto_mask:  # todo count here pipeline mask if selected and presented
+        print('leave clientside callback  only')
+        raise PreventUpdate
     if clickData is None:
         logging.debug('update_mask: nothing')
         raise PreventUpdate
     x = int(clickData['points'][0]['x'])
     y = int(clickData['points'][0]['y'])
-    logging.debug(f'updated_mask: {x}, {y}')
-    aladin_target = dash.no_update
-    if auto_mask:  # Recreate mask around selected pixel
-        target, pixel_data = search_pixel_data(pixel_type=pixel_type, obj_name=obj_name, ra=ra, dec=dec,
-                                               search_type=search_type, radius=radius, sector=sector, size=size)
-        coord = pixel_data.wcs.pixel_to_world(x, y)
-        aladin_target = f'{coord.ra.deg} {coord.dec.deg}'
-        mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel=(x, y))
-    else:
-        mask = np.array(mask_list)
-        mask[y, x] = not mask[y, x]  # Invert mask in the clicked pixel
+    logging.debug(f'create_mask: {x}, {y}, {threshold=}')
+    # aladin_target = dash.no_update
+    target, pixel_data = search_pixel_data(pixel_type=pixel_type, obj_name=obj_name, ra=ra, dec=dec,
+                                           search_type=search_type, radius=radius, sector=sector, size=size)
+    coord = pixel_data.wcs.pixel_to_world(x, y)
+    aladin_target = f'{coord.ra.deg} {coord.dec.deg}'
+    mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel=(x, y))
     shapes = create_shapes(mask)
     fig["layout"]["shapes"] = shapes
-    # current_fig.update_layout(shapes=shapes)
-    # return current_fig, f'Clicked on pixel: ({x}, {y})'
-    return fig, mask.tolist(), aladin_target
+    return aladin_target, mask.tolist()
+
+
+clientside_callback(
+    """
+    function updateFastMask(clickData, autoMask, maskList) {
+        console.log('updateFastMask', autoMask, clickData);
+
+        if (autoMask && autoMask.length > 0) {
+            console.log('updateFastMask: no_update')
+            return window.dash_clientside.no_update;
+        }
+
+        if (!clickData) {
+            return window.dash_clientside.no_update;
+        }
+
+        const x = Math.round(clickData.points[0].x);
+        const y = Math.round(clickData.points[0].y);
+        const updatedMask = [...maskList];
+        updatedMask[y][x] = updatedMask[y][x] ? 0 : 1;
+
+        return updatedMask;
+    }
+    """,
+    Output("mask_fast_store", "data", allow_duplicate=True),
+    [Input("px_tess_graph", "clickData")],
+    [State("auto_mask_switch", "value"),
+     State("mask_store", "data")],
+    prevent_initial_call=True
+)
+
+clientside_callback(
+    """
+    function updateFigureWithMask(mask, fig) {
+        console.log('updateFigureWithMask');
+
+        if (!mask || !fig) {
+            return window.dash_clientside.no_update;
+        }
+        console.log('fig =', fig);
+        // console.log('fig.layout=', fig.layout);
+        
+        // Recreate figure to trigger show updates
+        const updatedShapes = mask.flatMap((row, rowIndex) =>
+            row.map((val, colIndex) => {
+                if (val) {
+                    // Square
+                    const rect = {
+                        type: "rect",
+                        x0: colIndex - 0.5,
+                        x1: colIndex + 0.5,
+                        y0: rowIndex - 0.5,
+                        y1: rowIndex + 0.5,
+                        line: {color: "red", width: 1},
+                    };
+                    // Diagonal
+                    const line = {
+                        type: "line",
+                        x0: colIndex - 0.5,
+                        x1: colIndex + 0.5,
+                        y0: rowIndex - 0.5,
+                        y1: rowIndex + 0.5,
+                        line: {color: "red", width: 1},
+                    };
+                    return [rect, line];  // return square and diagonal
+                }
+                return null;
+            })
+        ).filter(Boolean).flat();  // flat array
+
+        console.log('updatedShapes=', updatedShapes);
+
+        const newLayout = {
+            ...fig.layout,
+            shapes: updatedShapes,
+            selections: undefined
+        };
+
+        // Copy and recreate figure to trigger rendering on the user screen
+        const newFigure = {
+             ...fig,
+             layout: newLayout
+        };
+
+        console.log('newLayout:', newLayout);
+
+        return newFigure;
+    }
+    """,
+    Output("px_tess_graph", "figure", allow_duplicate=True),
+    Input("mask_store", "data"),
+    State("px_tess_graph", "figure"),
+    prevent_initial_call=True
+)
 
 
 @callback(
     [Output('curve_graph_1', 'figure'),
      Output('curve_graph_2', 'figure'),
      Output('curve_graph_3', 'figure'),
-     Output('lc1_store', 'data'),
-     Output('lc2_store', 'data')],
+     Output('store_tess_lightcurve', 'data'),
+     Output('lc2_store', 'data'),
+     Output('store_tess_metadata', 'data')],
     [Input('plot_curve_tess_button', 'n_clicks'),
      State('ffi_tpf_switch', 'value'),
      State('obj_name_tess_input', 'value'),
@@ -556,7 +698,7 @@ def update_mask(clickData, fig, auto_mask, mask_list,
      State('radius_tess_input', 'value'),
      State('mask_store', 'data'),
      State('sector_drop', 'value'),
-     State('size_tess_input', 'value'),
+     State('size_ffi_input', 'value'),
      State('thresh_input', 'value'),
      State('star_tess_switch', 'value'),
      State('sub_bkg_switch', 'value'),
@@ -577,11 +719,6 @@ def plot_lightcurve(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius
     # if sub_bkg:
     #     pixel_data = subtract_background_inplace(pixel_data)
     lc = pixel_data.to_lightcurve(aperture_mask=mask)
-
-    # t = Table(lc)
-    # di = t.to_pandas(index=False).to_dict()
-    # di = lc.to_pandas().to_dict()        # time-column has gone into index!
-    # jsons = json.dumps(di)
 
     quality_mask = lc['quality'] == 0  # mask by TESS quality
     lc = lc[quality_mask]
@@ -615,6 +752,8 @@ def plot_lightcurve(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius
     jsons = json.dumps(df.to_dict())
 
     time_unit = lc.time.format
+    name = lc.LABEL if lc.LABEL else target
+    lc_metadata = {'target': name, 'img': pixel_type.upper(), 'sector': lc.sector}
     title = f'{pixel_type.upper()} {target} {lc.LABEL} sector:{lc.SECTOR}'
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=jd, y=flux,
@@ -630,17 +769,17 @@ def plot_lightcurve(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius
                       yaxis_title=yaxis_title,
                       )
     if star_number == '1':
-        return fig, dash.no_update, dash.no_update, jsons, dash.no_update
+        return fig, dash.no_update, dash.no_update, jsons, dash.no_update, lc_metadata
     elif star_number == '2':
-        return dash.no_update, fig, dash.no_update, dash.no_update, jsons
+        return dash.no_update, fig, dash.no_update, dash.no_update, jsons, lc_metadata
     else:
-        return dash.no_update, dash.no_update, fig, dash.no_update, dash.no_update
+        return dash.no_update, dash.no_update, fig, dash.no_update, dash.no_update, lc_metadata
 
 
 @callback(
     Output('curve_graph_3', 'figure', allow_duplicate=True),
     [Input('plot_difference_button', 'n_clicks'),
-     State('lc1_store', 'data'),
+     State('store_tess_lightcurve', 'data'),
      State('lc2_store', 'data'),
      State('compare_switch', 'value')],
     prevent_initial_call=True
@@ -721,7 +860,7 @@ def mark_cross(fig, x, y, cross_size=0.3, line_width=2, color='cyan'):
 @callback(
     [Output('ra_tess_input', 'value', allow_duplicate=True),
      Output('dec_tess_input', 'value', allow_duplicate=True),
-     Output('px_tess_graph', 'figure')],
+     Output('px_tess_graph', 'figure', allow_duplicate=True)],
     [Input('aladin_tess', 'clickedCoordinates'),
      State('px_tess_graph', 'figure'),
      State('wcs_store', 'data')],
@@ -801,5 +940,78 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius):
     return (f'Search {pixel_type.upper()} for {target}', data, {"display": "block"},
             target_ra_deg, target_dec_deg, aladin_target)
 
-# if __name__ == '__main__':
-#     app.run_server(debug=True)
+
+@callback(Output('download_tess_lc', 'data'),  # ------ Download -----
+          Input('btn_download_tess_lc', 'n_clicks'),
+          State('store_tess_lightcurve', 'data'),
+          State('store_tess_metadata', 'data'),
+          State('select_tess_format', 'value'),
+          prevent_initial_call=True)
+def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
+    # todo rewrite it
+    # todo add errors
+    if js_lightcurve is None:
+        raise PreventUpdate
+    # bstring is "bytes"
+    from skvo_veb.utils.handler import deserialise
+    import io
+    df = pd.DataFrame.from_dict(json.loads(js_lightcurve))
+    if 'left' in di_metadata and 'right' in di_metadata:
+        df = df[(df['jd'] >= di_metadata['left']) & (df['jd'] <= di_metadata['right'])]
+    tab = Table.from_pandas(df)
+    if table_format in kurve._format_dict_text:
+        my_weird_io = io.StringIO()
+    elif table_format in kurve._format_dict_bytes:
+        my_weird_io = io.BytesIO()
+    else:
+        raise PipeException(f'Unsupported format {table_format}\n Valid formats: {str(kurve.format_dict.keys())}')
+    tab.write(my_weird_io, format=table_format, overwrite=True)
+    my_weird_string = my_weird_io.getvalue()
+    if isinstance(my_weird_string, str):
+        # instead, we could choose  dcc.send_string() or dcc.send_bytes() for text or byte string in Dash application
+        # I prefer to place all io-logic in one place, here, and convert all stuff into bytes
+        my_weird_string = bytes(my_weird_string, 'utf-8')
+    my_weird_io.close()  # todo Needed?
+
+    outfile_base = f'lc_tess_' + "_".join(f"{key}_{value}" for key, value in di_metadata.items()).replace(" ", "_")
+    ext = kurve.get_file_extension(table_format)
+    outfile = f'{outfile_base}.{ext}'
+
+    ret = dcc.send_bytes(my_weird_string, outfile)
+    return ret
+
+
+# @callback(
+#     Output('table_tess_header', 'children', allow_duplicate=True),
+#     Input('curve_graph_1', 'relayoutData'),
+#     prevent_initial_call=True
+# )
+# def update_zoom_select_data(relayout_data):
+#     print('update_zoom_select_data')
+#     if 'xaxis.range[0]' in relayout_data and 'xaxis.range[1]' in relayout_data:
+#         left_border = relayout_data['xaxis.range[0]']
+#         right_border = relayout_data['xaxis.range[1]']
+#         print(f"Left border: {left_border}, Right border: {right_border}")
+#         raise PreventUpdate
+#
+#     raise PreventUpdate
+
+
+@callback(
+    Output('store_tess_metadata', 'data', allow_duplicate=True),
+    # Output('curve_graph_1', 'selectedData'),
+    Input('curve_graph_1', 'selectedData'),
+    State('store_tess_metadata', 'data'),
+    prevent_initial_call=True
+)
+def update_box_select_data(selected_data, di_metadata):
+    print('update_box_select_data')
+    if selected_data is None:
+        raise PreventUpdate
+    if 'range' in selected_data:
+        if 'x' in selected_data['range']:
+            left_border, right_border = selected_data['range']['x']
+            print(f"Left border: {left_border}, Right border: {right_border}")
+            di_metadata['left'] = np.round(left_border, 1)
+            di_metadata['right'] = np.round(right_border, 1)
+    return di_metadata
