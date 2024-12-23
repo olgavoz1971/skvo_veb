@@ -1,28 +1,23 @@
 import json
 import logging
 
-import numpy as np
+import aladin_lite_react_component
 import astropy.units as u
-from astropy.coordinates import SkyCoord
-from astropy.wcs import WCS
-
-import pandas as pd
-from astropy.table import Table
-
-from astropy.stats import sigma_clipped_stats
-
-from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback
-import plotly.express as px
-import plotly.graph_objects as go
 import dash
 import dash_bootstrap_components as dbc
+import lightkurve
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from astropy.coordinates import SkyCoord
+from astropy.table import Table
+from astropy.wcs import WCS
+from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback
 from dash.dash_table import DataTable
-
 from dash.exceptions import PreventUpdate
 from lightkurve import search_targetpixelfile, search_tesscut
 from lightkurve.correctors import PLDCorrector
-
-import aladin_lite_react_component
 
 # TESS stuff
 from skvo_veb.utils import tess_cache as cache, handler, kurve
@@ -58,11 +53,12 @@ def log_gamma(data, gamma=0.9, log=True):
 
 # app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
-# switch_label_style = {'display': 'inline-block', 'padding': '5px'}  # In the row, otherwise 'block'
-switch_label_style = {'display': 'block', 'padding': '2px'}  # In the row, otherwise 'block'
+switch_label_style = {'display': 'inline-block', 'padding': '5px'}  # In the row, otherwise 'block'
+# switch_label_style = {'display': 'block', 'padding': '2px'}  # In the row, otherwise 'block'
+label_font_size = '0.8em'
 
 
-def imshow_logscale(img, scale_method=None, gamma=0.99, **kwargs):
+def imshow_logscale(img, scale_method=None, show_colorbar=False, gamma=0.99, **kwargs):
     # from engineering_notation import EngNumber
     import matplotlib.ticker as ticker
 
@@ -77,32 +73,35 @@ def imshow_logscale(img, scale_method=None, gamma=0.99, **kwargs):
         **kwargs,
     )
 
-    val_min = img.min()
-    val_max = img.max()
-    val_range = val_max - val_min
-    left = val_min
-    left = left if left > 0 else img_true_min
-    right = val_max + val_range / 100
-    right = right if right > 0 else img_true_min
-    locator = ticker.MaxNLocator(nbins=5)
-    TICKS_VALS = np.array(locator.tick_values(left, right))
-    TICKS_VALS[0] = left
+    if show_colorbar:
+        val_min = img.min()
+        val_max = img.max()
+        val_range = val_max - val_min
+        left = val_min
+        left = left if left > 0 else img_true_min
+        right = val_max + val_range / 100
+        right = right if right > 0 else img_true_min
+        locator = ticker.MaxNLocator(nbins=5)
+        TICKS_VALS = np.array(locator.tick_values(left, right))
+        TICKS_VALS[0] = left
 
-    TICKS_VALS = TICKS_VALS[TICKS_VALS >= 0]
-    TICKS_VALS[TICKS_VALS == 0] = img_true_min
-    ticks_text = [f'{val:.0f}' for val in TICKS_VALS]
-    # ticks_text = [f'{EngNumber(val)}' for val in TICKS_VALS]
-    if scale_method is not None:
-        tickvals = [scale_method(val, gamma=gamma) for val in TICKS_VALS]
+        TICKS_VALS = TICKS_VALS[TICKS_VALS >= 0]
+        TICKS_VALS[TICKS_VALS == 0] = img_true_min
+        ticks_text = [f'{val:.0f}' for val in TICKS_VALS]
+        # ticks_text = [f'{EngNumber(val)}' for val in TICKS_VALS]
+        if scale_method is not None:
+            tickvals = [scale_method(val, gamma=gamma) for val in TICKS_VALS]
+        else:
+            tickvals = TICKS_VALS
+        fig.update_layout(
+            coloraxis_colorbar=dict(
+                tickvals=tickvals,
+                ticktext=ticks_text,
+            ),
+        )
     else:
-        tickvals = TICKS_VALS
-    print(ticks_text)
-    fig.update_layout(
-        coloraxis_colorbar=dict(
-            tickvals=tickvals,
-            ticktext=ticks_text,
-        ),
-    )
+        fig.update_layout(coloraxis_showscale=False),
+
     fig.data[0]['customdata'] = img  # store here not-logarithmic values
     fig.data[0]['hovertemplate'] = '%{customdata:.0f}<extra></extra>'
     return fig
@@ -110,94 +109,208 @@ def imshow_logscale(img, scale_method=None, gamma=0.99, **kwargs):
 
 def layout():
     return dbc.Container([
-        dbc.Row([
-            html.H1('TESS Curver', className="text-primary text-left fs-3"),
-            dbc.Col([
-                dbc.Stack([
-                    dbc.Label('Object', html_for='obj_name_tess_input', style={'width': '7em'}),
-                    dcc.Input(id='obj_name_tess_input', persistence=True, type='text', style={'width': '100%'}),
-                ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+        html.H1('TESS Curver', className="text-primary text-left fs-3"),
+        dbc.Tabs([
+            dbc.Tab(label='Search Sector', children=[
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Stack([
+                            dbc.Label('Object', html_for='obj_name_tess_input', style={'width': '7em'}),
+                            dcc.Input(id='obj_name_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                        dbc.Stack([
+                            dbc.Label('RA', html_for='ra_input', style={'width': '7em'}),
+                            dcc.Input(id='ra_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                        dbc.Stack([
+                            dbc.Label('DEC', html_for='dec_tess_input', style={'width': '7em'}),
+                            dcc.Input(id='dec_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                        dbc.Stack([
+                            dbc.Label('Radius', html_for='radius_tess_input', style={'width': '7em'}),
+                            dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
+                                      style={'width': '100%'}),
+                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                        dbc.Button('Search', id='search_tess_button', size="sm",
+                                   style={'width': '100%'}),
+                        dcc.RadioItems(
+                            id='ffi_tpf_switch',
+                            options=[
+                                {'label': 'FFI', 'value': 'ffi'},
+                                {'label': 'TPF', 'value': 'tpf'}
+                            ],
+                            value='tpf',
+                            labelStyle={'display': 'inline-block', 'padding': '5px'}),
+                    ], md=2, sm=12, style={'padding': '10px', 'background': 'Silver'}),  # SearchTools
+                    dbc.Col([
+                        dbc.Spinner(
+                            html.Div([
+                                dbc.Row([
+                                    dbc.Col([
+                                        html.H3("Search results", id="table_tess_header"),
+                                    ], md=6, sm=12),
+                                    dbc.Col([
+                                        dbc.Stack([
+                                            dbc.Label('Size', html_for='size_ffi_input', style={'width': '7em'}),
+                                            dcc.Input(id='size_ffi_input', persistence=True, type='number', min=1,
+                                                      value=11,
+                                                      style={'width': '100%'}),
+                                            dbc.Button('Download sector', id='download_sector_button', size="sm",
+                                                       style={'width': '100%'}),
+                                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                                    ], md=6, sm=12),
+                                ]),
+                                dbc.Row([
+                                    DataTable(
+                                        id="data_tess_table",
+                                        columns=[{"name": col, "id": col} for col in
+                                                 ["#", "mission", "year", "author", "exptime", "target", "distance"]],
+                                        data=[],
+                                        row_selectable="single",
+                                        fixed_rows={'headers': True},  # Freeze the header
+                                        style_table={
+                                            'maxHeight': '30vh',
+                                            'overflowY': 'auto',  # vertical scrolling
+                                            'overflowX': 'auto',  # horizontal scrolling
+                                        },
+                                        page_action="native", sort_action="native",
+                                        style_cell={"font-size": 14, 'textAlign': 'left'},
+                                        cell_selectable=False,
+                                        style_header={"font-size": 14, 'font-family': 'courier',
+                                                      'color': '#000',
+                                                      'backgroundColor': 'var(--bs-light)',
+                                                      'textAlign': 'left'},
+                                    )
+                                ]),
+                            ]),  # id="search_results_row", style={"display": "none"}),  # Search results
+                            # id="search_results_spinner",
+                            # style={"display": "none"},
+                        ),
+                    ], id="search_results_row", style={"display": "none"}, md=10, sm=12),
+                ], style={'marginBottom': '10px'}),  # Search and SearchResults
+                dbc.Spinner(
+                    dbc.Label(id="download_sector_result", children='label text',
+                              style={"color": "green", "text-align": "center"}),
+                    spinner_style={
+                        # "display": "flex",
+                        # "width": "100%",
+                        "align-items": "center",
+                        "justify-content": "center",
+                    }, color="primary",
+                    # fullscreen=False,
+                )
+                # ], style={'marginBottom': '10px'}, justify="center"),
+            ], tab_id='tess_search_tab'),  # Search and SearchResults Tab
+            dbc.Tab(label='Plot', children=[  # The Second Tab containing the content
+                # html.Div([
+                dbc.Row([
+                    dbc.Col([
+                        # dbc.Row([
+                        #     dbc.Label('Visualization', html_for='input_tess_gamma',
+                        #               style={"textAlign": "center"}),
+                        # ], align='center'),  # Visualization label
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Stack([
+                                    dbc.Label('Scale', html_for='input_tess_gamma',
+                                              style={'width': '7em', 'font-size': label_font_size}),
+                                    dcc.Input(id='input_tess_gamma', inputMode='numeric', persistence=True,
+                                              value=1, type='number', style={'width': '100%'}),
+                                ], direction='horizontal', gap=2),  # Scale and Sum
+                            ], width='auto'),
 
-                dbc.Stack([
-                    dbc.Label('RA', html_for='ra_input', style={'width': '7em'}),
-                    dcc.Input(id='ra_tess_input', persistence=True, type='text', style={'width': '100%'}),
-                ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                dbc.Stack([
-                    dbc.Label('DEC', html_for='dec_tess_input', style={'width': '7em'}),
-                    dcc.Input(id='dec_tess_input', persistence=True, type='text', style={'width': '100%'}),
-                ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                dbc.Stack([
-                    dbc.Label('Radius', html_for='radius_tess_input', style={'width': '7em'}),
-                    dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
-                              style={'width': '100%'}),
-                ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                dbc.Stack([
-                    dbc.Label('Size', html_for='size_ffi_input', style={'width': '7em'}),
-                    dcc.Input(id='size_ffi_input', persistence=True, type='number', min=1, value=11,
-                              style={'width': '100%'}),
-                ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                        ], justify="between", style={'marginBottom': '5px'}, ),  # Visualization switches
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Checklist(options=[{'label': 'Sum', 'value': 1}], value=0, id='sum_switch',
+                                              persistence=True, switch=True,
+                                              style={'font-size': label_font_size}),  # style={'margin-left': 'auto'}),
+                            ], width='auto'),
+                            dbc.Col(dbc.Button('Plot pixel', id='replot_pixel_button', size="sm",
+                                               style={'width': '100%'}), width='auto'),
+                        ], justify="between", style={'marginBottom': '10px'}),  # plot button
+                        # dbc.Row([
+                        #     dbc.Label('Mask', style={"textAlign": "center"}),
+                        # ]),  # style={'marginBottom': '5px'}),  # Mask label
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Stack([
+                                    dbc.Label('Mask thresh', html_for='thresh_input',
+                                              style={'width': '7em', 'font-size': label_font_size}),
+                                    dcc.Input(id='thresh_input', inputMode='numeric', persistence=True,
+                                              value=1, type='number',
+                                              style={'width': '100%'}),
+                                ], direction='horizontal', gap=2),  # Sc
+                            ], width='auto'),  # Mask Threshold
+                            dbc.Col([
+                                dbc.Checklist(options=[{'label': 'Auto mask', 'value': 1}], value=0,
+                                              id='auto_mask_switch',
+                                              style={'font-size': label_font_size},
+                                              persistence=True, switch=True),
 
-                dbc.Stack([
-                    dbc.Label('Sector', html_for='sector_drop', style={'width': '7em'}),
-                    dcc.Input(id='sector_drop', type='number', min=0, value=0,
-                              persistence=True, style={'width': '100%'}),  # '5em'}),
-                    # dcc.Dropdown(id='sector_drop', clearable=False,
-                    #              options=[{'label': sector, 'value': sector} for sector in ['0', '1', '2']],
-                    #              style={'width': '100%'}),  # '5em'}),
-                ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                dbc.Stack([
-                    dbc.Label('Threshold', html_for='thresh_input', style={'width': '7em'}),
-                    dcc.Input(id='thresh_input', type='number', min=0, value=2,
-                              persistence=True, style={'width': '100%'}),  # '5em'}),
-                ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                html.Div([
-                    dbc.Row([
-                        dbc.Col(dbc.Button('Search', id='search_tess_button', size="sm", style={'width': '100%'}),
-                                width=6),
-                        dbc.Col(dbc.Button('Plot pixel', id='plot_pixel_button', size="sm", style={'width': '100%'}),
-                                width=6),
-                    ], style={'marginBottom': '5px'}),
-                    dbc.Row([
-                        dbc.Col(dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm",
-                                           style={'width': '100%'}),
-                                width=6),
-                        dbc.Col(dbc.Button('Compare', id='plot_difference_button', size="sm", style={'width': '100%'}),
-                                width=6),
-                    ], style={'marginBottom': '5px'}),
-                    dbc.Row([
-                        dbc.Col([
-                            dbc.Stack([
-                                dbc.Select(options=handler.get_format_list(), value=handler.get_format_list()[0],
-                                           id='select_tess_format'),
-                                dbc.Button('Download', id='btn_download_tess_lc', size="sm",
-                                           style={'width': '100%'}),
-                            ], direction='horizontal', gap=2)
-                        ], md=12, sm=12),  # select a format
-                    ], style={'marginBottom': '5px'}),
-                    dbc.Row([
-                        dbc.Col([
-                            dcc.RadioItems(
-                                id='ffi_tpf_switch',
-                                options=[
-                                    {'label': 'FFI', 'value': 'ffi'},
-                                    {'label': 'TPF', 'value': 'tpf'}
-                                ],
-                                value='tpf',
-                                labelStyle=switch_label_style,
-                            )], width=6),
-                        dbc.Col([
-                            dcc.RadioItems(
-                                id='search_tess_switch',
-                                options=[
-                                    {'label': 'coord', 'value': 'coord'},
-                                    {'label': 'name', 'value': 'name'}
-                                ],
-                                value='name',
-                                labelStyle=switch_label_style,
-                            )], width=6),
-                    ], style={'marginBottom': '5px'}),
-                    dbc.Row([
-                        dbc.Col([
+                                dcc.RadioItems(
+                                    id='mask_switch',
+                                    options=[
+                                        {'label': 'pipe', 'value': 'pipeline'},
+                                        {'label': 'thresh', 'value': 'threshold'},
+                                    ],
+                                    value='threshold',
+                                    labelStyle=switch_label_style,
+                                    style={'font-size': label_font_size},
+                                ),
+                            ], width='auto'),  # Mask switches
+                        ], justify='between', style={'marginBottom': '5px'}),  # mask switches
+                    ], md=2, sm=4, style={'padding': '10px', 'background': 'Silver'}),  # tools
+                    dbc.Col([
+                        dcc.Markdown(
+                            '_**Select mask and build the lightcurve**_:\n'
+                            '* Click on a star in the **Aladin** applet to mark it on the pixel image\n'
+                            '* **Handmade Mask:** Click on a pixel to set/unset mask\n'
+                            '* **Auto-mask:** Click on a pixel to create a threshold mask around it\n'
+                            '* **Pipeline mask:** Use the mask provided by the team\n'
+                            '* **Flux/Cent X/Y:** View its time dependence\n'
+                            '* **Flatten:** Not functional yet\n',
+                            style={"font-size": 12, 'font-family': 'courier'}
+                        ),
+                    ], md=3, sm=8),  # Description
+                    dbc.Col([
+                        dcc.Graph(id='px_tess_graph',
+                                  config={'displaylogo': False},
+                                  style={'height': '250px'},  # 'margin': '0 auto'},
+                                  # style={'height': '35vh'},
+                                  # style={'height': '35vh'},
+                                  # style={'height': '100%'},
+                                  # style={'height': '100%', 'aspect-ratio': '1'},
+                                  # style={'height': '45vh', 'aspect-ratio': '1'}),
+                                  # style={'height': '40vh', 'aspect-ratio': '1'}
+                                  ),
+                    ], md=3, sm=6),  # pixel graph
+                    dbc.Col([
+                        aladin_lite_react_component.AladinLiteReactComponent(
+                            id='aladin_tess',
+                            width=300,
+                            height=200,
+                            fov=round(2 * 10) / 60,  # in degrees
+                            target='02:03:54 +42:19:47',
+                            # stars=stars,
+                        ),
+                    ], md=4, sm=6)  # aladin
+                ], style={'marginBottom': '10px'}),  # align='center'),  # Px graph and Aladin
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Row([
+                            dbc.Col([
+                                dbc.Checklist(options=[{'label': 'Sub bkg', 'value': 1}], value=0,
+                                              style={'font-size': label_font_size},
+                                              id='sub_bkg_switch', persistence=True, switch=True),
+                            ], width='auto'),
+                            dbc.Col([
+                                dbc.Checklist(options=[{'label': 'Fatten', 'value': 1}], value=0,
+                                              style={'font-size': label_font_size},
+                                              id='flatten_switch', persistence=True, switch=True),
+                            ], width='auto'),
+                        ], style={'marginBottom': '5px'}),
+                        dbc.Row([
                             dcc.RadioItems(
                                 id='star_tess_switch',
                                 options=[
@@ -207,15 +320,17 @@ def layout():
                                 ],
                                 value='1',
                                 labelStyle=switch_label_style,
+                                style={'font-size': label_font_size},
                             ),
                             dcc.RadioItems(
                                 id='compare_switch',
                                 options=[
                                     {'label': 'divide', 'value': 'divide'},
-                                    {'label': 'subtr', 'value': 'subtract'},
+                                    {'label': 'subtract', 'value': 'subtract'},
                                 ],
                                 value='divide',
                                 labelStyle=switch_label_style,
+                                style={'font-size': label_font_size},
                             ),
                             dcc.RadioItems(
                                 id='ordinate_switch',
@@ -226,101 +341,62 @@ def layout():
                                 ],
                                 value='flux',
                                 labelStyle=switch_label_style,
+                                style={'font-size': label_font_size},
                             ),
-                        ], width=6),
-                        dbc.Col([
-                            dbc.Checklist(options=[{'label': 'Sum', 'value': 1}], value=0, id='sum_switch',
-                                          persistence=True, switch=True),
-                            dbc.Checklist(options=[{'label': 'Auto mask', 'value': 1}], value=0, id='auto_mask_switch',
-                                          persistence=True, switch=True),
-                            dbc.Checklist(options=[{'label': 'Sub bkg', 'value': 1}], value=0,
-                                          id='sub_bkg_switch', persistence=True, switch=True),
-                            dbc.Checklist(options=[{'label': 'Fatten', 'value': 1}], value=0,
-                                          id='flatten_switch', persistence=True, switch=True),
-                            dbc.Label('Mask:', html_for='mask_switch'),
-                            dcc.RadioItems(
-                                id='mask_switch',
-                                options=[
-                                    {'label': 'pipe', 'value': 'pipeline'},
-                                    {'label': 'thresh', 'value': 'threshold'},
-                                ],
-                                value='threshold',
-                                labelStyle=switch_label_style,
-                            ),
-                        ], width=6),
-
-                    ], style={'marginBottom': '5px'}),  # switches
-                    dbc.Row([
-                        dbc.Label('Pixel visualisation'),
-                        dbc.Stack([
-                            dbc.Label('Scale:', html_for='input_tess_gamma'),
-                            dbc.Input(id='input_tess_gamma', value=1, type='number'),
-                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-
-                    ], style={'marginBottom': '5px'}),  # tune visualization
-                ])  # buttons
-            ], md=2, sm=12, style={'padding': '10px', 'background': 'Silver'}),  # 'LightGray'}),  # Tools
-            dbc.Col([
-                dbc.Row([
+                        ], style={'marginBottom': '5px'}),  # curve tune
+                        dbc.Row([
+                            dbc.Col(dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm",
+                                               style={'width': '100%'}),
+                                    width='auto'),
+                            dbc.Col(dbc.Button('Compare', id='plot_difference_button', size="sm",
+                                               style={'width': '100%'}),
+                                    width='auto'),
+                        ], justify='between',
+                            className='gy-1',
+                            style={'marginBottom': '5px'}),  # plot buttons
+                        dbc.Row([
+                            dbc.Col([
+                                # dbc.Stack([
+                                dbc.Select(options=handler.get_format_list(),
+                                           value=handler.get_format_list()[0],
+                                           id='select_tess_format',
+                                           style={'max-width': '7em'}),
+                            ], width='auto'),
+                            dbc.Col([
+                                dbc.Button('Download', id='btn_download_tess_lc', size="sm",
+                                           style={'width': '100%'}),
+                                # ], direction='horizontal', gap=2)
+                            ], width='auto'),  # select a format
+                        ], justify='between',
+                            className='gy-1',   # class adds vertical gaps between folded columns
+                            style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
+                    ], md=2, sm=2, style={'padding': '10px', 'background': 'Silver'}),  # Light Curve Tools
                     dbc.Col([
-                        dcc.Graph(id='px_tess_graph',
-                                  config={'displaylogo': False},
-                                  # style={'height': '100%'}),
-                                  # style={'height': '100%', 'aspect-ratio': '1'}),
-                                  # style={'height': '45vh', 'aspect-ratio': '1'}),
-                                  style={'height': '40vh', 'aspect-ratio': '1'}),
-                    ], md=6, sm=12),  # pixel graph
-                    dbc.Col([
-                        aladin_lite_react_component.AladinLiteReactComponent(
-                            id='aladin_tess',
-                            width=300,
-                            height=300,
-                            fov=round(2 * 10) / 60,  # in degrees
-                            target='02:03:54 +42:19:47',
-                            # stars=stars,
-                        ),
-                    ], md=6, sm=12)  # aladin
-                ], align='center'),  # Px graph and Aladin
-                dbc.Row([
-                    dcc.Graph(id='curve_graph_1',
-                              config={'displaylogo': False},
-                              style={'height': '30vh'}),  # 100% of the viewport height
-                ]),  # First Light Curve
-                dbc.Row([
-                    dcc.Graph(id='curve_graph_2',
-                              config={'displaylogo': False},
-                              style={'height': '30vh'}),  # 100% of the viewport height
-                ]),  # Second Light Curve
-                dbc.Row([
-                    dcc.Graph(id='curve_graph_3',
-                              config={'displaylogo': False},
-                              style={'height': '30vh'}),  # 100% of the viewport height
-                ]),  # Third Light Curve
-            ], md=10, sm=12, style={'padding': '2px', 'background': 'Silver'}),  # All graphs
-        ], style={'marginBottom': '10px'}),  # Buttons and Graph are here
-        dbc.Row([
-            html.H3("Search results", id="table_tess_header"),
-            DataTable(
-                id="data_tess_table",
-                columns=[{"name": col, "id": col} for col in
-                         ["#", "mission", "year", "author", "exptime", "target", "distance"]],
-                data=[],
-                # row_selectable="multi",
-                fixed_rows={'headers': True},  # Freeze the header
-                style_table={
-                    'maxHeight': '30vh',
-                    'overflowY': 'auto',  # vertical scrolling
-                    'overflowX': 'auto',  # horizontal scrolling
-                },
-                page_action="native", sort_action="native",
-                style_cell={"font-size": 14, 'textAlign': 'left'},
-                cell_selectable=False,
-                style_header={"font-size": 14, 'font-family': 'courier',
-                              'color': '#000',
-                              'backgroundColor': 'var(--bs-light)',
-                              'textAlign': 'left'},
-            )
-        ], id="table_tess_row", style={"display": "none"}),  # The Table is here
+                        dbc.Accordion([
+                            dbc.AccordionItem(item_id='accordion_item_1', children=[
+                                dcc.Graph(id='curve_graph_1',
+                                          config={'displaylogo': False},
+                                          style={'height': '30vh'}),  # 100% of the viewport height
+                            ],
+                                              title='First Light Curve'),
+                            dbc.AccordionItem([
+                                dcc.Graph(id='curve_graph_2',
+                                          config={'displaylogo': False},
+                                          style={'height': '30vh'}),  # 100% of the viewport height
+                            ], title='Second Light Curve', item_id='accordion_item_2'),
+                            dbc.AccordionItem([
+                                dcc.Graph(id='curve_graph_3',
+                                          config={'displaylogo': False},
+                                          style={'height': '30vh'}),  # 100% of the viewport height
+                            ], title='Third Light Curve', item_id='accordion_item_3'),
+                        ], id='lc_accordion', start_collapsed=True, always_open=True)  # Light Curves
+                    ], md=10, sm=10),  # Light Curves Accordion
+
+                ], style={'marginBottom': '10px'}),  # Light Curves
+            ], tab_id='tess_graph_tab', id='tess_graph_tab', disabled=True),
+        ], active_tab='tess_search_tab', id='tess_tabs'),
+        dcc.Store(id='store_search_result'),  # things showed in the data table
+        dcc.Store(id='store_pixel_metadata'),  # stuff for recreation current pixel
         dcc.Store(id='mask_store'),
         dcc.Store(id='mask_slow_store'),
         dcc.Store(id='mask_fast_store'),
@@ -329,7 +405,7 @@ def layout():
         dcc.Store(id='store_tess_metadata'),
         dcc.Store(id='lc2_store'),
         dcc.Download(id='download_tess_lc'),
-    ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column', 'height': '100vh'})
+    ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})  #, 'height': '100vh'})
 
 
 def create_shapes(target_mask):
@@ -363,12 +439,12 @@ def get_tpf(target, radius=10):
     """
     lightkurve search says:
     :param radius: float or `astropy.units.Quantity` object
-        Conesearch radius.  If a float is given it will be assumed to be in
+        Conesearch radius.  If a float is given, it will be assumed to be in
         units of arcseconds.  If `None` then we default to 0.0001 arcsec.
     :param target: str, int, or `astropy.coordinates.SkyCoord` object
         Target around which to search. Valid inputs include:
             * The name of the object as a string, e.g. "Kepler-10".
-            * The KIC or EPIC identifier as an integer, e.g. 11904151.
+            * The KIC or EPIC identifier as an integer, e.g., 11904151.
             * A coordinate string in decimal format, e.g. "285.67942179 +50.24130576".
             * A coordinate string in sexagesimal format, e.g. "19:02:43.1 +50:14:28.7".
             * An `astropy.coordinates.SkyCoord` object.
@@ -382,24 +458,13 @@ def get_tpf(target, radius=10):
     return tpf
 
 
-def get_tpf_data(target, radius, sector: int):
-    tpf_data = cache.load_tpf_fits(target=target, radius=radius, sector=sector)
-    if tpf_data is None:
-        tpf = get_tpf(target=target, radius=radius)
-        if len(tpf) <= sector:
-            raise PreventUpdate  # todo specify this exception
-        tpf_data = tpf[sector].download()
-        cache.save_tpf_fits(tpf_data, target=target, radius=radius, sector=sector)
-    return tpf_data
-
-
 def get_ffi(target):
     """
     lightkurve search_tesscut says:
     :param target: str, int, or `astropy.coordinates.SkyCoord` object
         Target around which to search. Valid inputs include:
             * The name of the object as a string, e.g. "Kepler-10".
-            * The KIC or EPIC identifier as an integer, e.g. 11904151.
+            * The KIC or EPIC identifier as an integer, e.g., 11904151.
             * A coordinate string in decimal format, e.g. "285.67942179 +50.24130576".
             * A coordinate string in sexagesimal format, e.g. "19:02:43.1 +50:14:28.7".
             * An `astropy.coordinates.SkyCoord` object.
@@ -413,73 +478,62 @@ def get_ffi(target):
     return ffi
 
 
-def get_ffi_data(target: str, sector: int, size: int):
-    ffi_data = cache.load_ffi_fits(target=target, sector=sector, size=size)
-    if ffi_data is None:
-        ffi = get_ffi(target=target)
-        if len(ffi) <= sector:
-            raise PreventUpdate  # todo specify this exception
-        ffi_data = ffi[sector].download(cutout_size=size)
-        cache.save_ffi_fits(ffi_data, target=target, sector=sector, size=size)
-    return ffi_data
+def parse_table_data(selected_rows, table_data):
+    # Parse the firsts selected row only
+    if not selected_rows or not table_data:
+        raise PreventUpdate
+    if len(selected_rows) < 1:
+        raise PreventUpdate
+    selected_data = [table_data[i] for i in selected_rows]
+    return selected_data[0]
 
 
-def search_pixel_data(pixel_type, obj_name, ra, dec, search_type, radius, sector, size):
-    if search_type == 'name':
-        target = obj_name
-    else:
-        target = f'{ra} {dec}'
-    if pixel_type == 'ffi':
-        pixel_data = get_ffi_data(target=target, sector=sector, size=size)
-    else:
-        pixel_data = get_tpf_data(target=target, radius=radius, sector=sector)
-    return target, pixel_data
+@callback(
+    [Output('store_pixel_metadata', 'data'),
+     Output('wcs_store', 'data', allow_duplicate=True),
+     Output('tess_graph_tab', 'disabled'),
+     Output('aladin_tess', 'target', allow_duplicate=True),
+     Output('download_sector_result', 'children'),
+     Output('tess_tabs', 'active_tab')],
+    [Input('download_sector_button', 'n_clicks'),
+     State('data_tess_table', 'selected_rows'),
+     State('data_tess_table', 'data'),
+     State('store_search_result', 'data'),
+     State('size_ffi_input', 'value')],
+    prevent_initial_call=True
+)
+def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
+    if n_clicks is None:
+        raise PreventUpdate
+    pixel_metadata, pixel_data = download_selected_pixel(selected_rows, table_data, pixel_di, size)
+    pixel_metadata['path'] = pixel_data.path
+    pixel_metadata['shape'] = pixel_data.shape
+    pixel_metadata['pipeline_mask'] = pixel_data.pipeline_mask
 
-
-def subtract_background_inplace(tpf):  # todo It doesn't work this way (in place) due to protected members
-    # corrected_flux = np.zeros_like(tpf.flux)
-    for i, frame in enumerate(tpf.flux):
-        mean, median, std = sigma_clipped_stats(frame, sigma=3.0)
-        logging.debug(f'frame {i} clipped {median=}')
-
-        # corrected_flux[i] = frame - median_background
-        # noinspection PyUnresolvedReferences
-        bkg = median * u.electron / u.s
-        tpf.flux[i] = tpf.flux[i] - bkg
-    return tpf
-
-
-# from plotly_utils import imshow_logscale  # todo: It is a beta testing
+    wcs_di = dict(pixel_data.wcs.to_header())
+    aladin_target = f'{pixel_data.ra} {pixel_data.dec}'
+    return (pixel_metadata, wcs_di, False, aladin_target,
+            'Success. Switch to the next Tab', 'tess_graph_tab')
 
 
 @callback(
     [Output('px_tess_graph', 'figure', allow_duplicate=True),
-     Output('mask_store', 'data', allow_duplicate=True),
-     Output('wcs_store', 'data', allow_duplicate=True)],
-    [Input('plot_pixel_button', 'n_clicks'),
+     Output('mask_store', 'data', allow_duplicate=True)],
+    [Input('replot_pixel_button', 'n_clicks'),
+     Input('store_pixel_metadata', 'data'),
      State('input_tess_gamma', 'value'),
-     State('ffi_tpf_switch', 'value'),
-     State('obj_name_tess_input', 'value'),
-     State('ra_tess_input', 'value'),
-     State('dec_tess_input', 'value'),
-     State('search_tess_switch', 'value'),
-     State('radius_tess_input', 'value'),
-     State('sector_drop', 'value'),
-     State('size_ffi_input', 'value'),
      State('thresh_input', 'value'),
      State('sum_switch', 'value'),
      State('mask_switch', 'value'),
      State('auto_mask_switch', 'value')],
     prevent_initial_call=True
 )
-def plot_pixel(n_clicks, gamma, pixel_type, obj_name, ra, dec, search_type, radius, sector, size, threshold, sum_it,
-               mask_type, auto_mask):
-    if n_clicks is None:
-        raise PreventUpdate
-
-    target, pixel_data = search_pixel_data(pixel_type=pixel_type, obj_name=obj_name, ra=ra, dec=dec,
-                                           search_type=search_type, radius=radius, sector=sector, size=size)
-
+def plot_pixel(n_clicks, pixel_metadata, gamma, threshold, sum_it, mask_type, auto_mask):
+    ctx = dash.callback_context
+    if ctx.triggered and ctx.triggered[0]["prop_id"] == "replot_pixel_button.n_clicks":
+        if n_clicks is None:
+            raise PreventUpdate
+    pixel_data = lightkurve.targetpixelfile.TessTargetPixelFile(pixel_metadata['path'])
     px_shape = pixel_data.shape[1:]
     mask = np.full(px_shape, False)
     if auto_mask:
@@ -490,30 +544,64 @@ def plot_pixel(n_clicks, gamma, pixel_type, obj_name, ra, dec, search_type, radi
     mask_shapes = create_shapes(mask)
 
     if sum_it:
-        logging.debug(f'Sum {len(pixel_data.flux)}')
-        # data_to_show = log_gamma(np.sum(pixel_data.flux[:], axis=0), log=log)
         data_to_show = np.sum(pixel_data.flux[:], axis=0)
     else:
         data_to_show = pixel_data.flux[0]  # take only the first crop
 
     # fig = px.imshow(data_to_show.value, color_continuous_scale='Viridis', origin='lower') fig = imshow_logscale(
     # data_to_show.value, scale_method=log_gamma, color_continuous_scale='Viridis', origin='lower')
-    print(f'{gamma=} {type(gamma)=}')
+    # print(f'{gamma=} {type(gamma)=}')
+    show_colorbar = False
     fig = imshow_logscale(data_to_show.value, scale_method=log_gamma, color_continuous_scale='Viridis', origin='lower',
-                          gamma=gamma)
-    # fig.update_traces(hovertemplate=None, hoverinfo='none')
+                          show_colorbar=show_colorbar, gamma=gamma)
     # fig.update_traces(hovertemplate="%{z:.0f}<extra></extra>", hoverinfo="z")
-    fig.update_layout(title=pixel_type.upper(),  # coloraxis_showscale=False,
-                      coloraxis_colorbar=dict(
-                          len=0.9,  # Set the length (fraction of plot height, e.g., 0.5 = half the plot height)
-                          thickness=15,  # Set the thickness (in pixels)
-                      ),
-                      xaxis=dict(showticklabels=False), yaxis=dict(showticklabels=False),
-                      showlegend=False, margin=dict(l=20, b=20, t=30, r=20),
-                      shapes=mask_shapes)
+    if show_colorbar:
+        coloraxis_colorbar = dict(len=0.9,  # Set the length (fraction of plot height, e.g., 0.5 = half the plot height)
+                                  thickness=15  # Set the thickness (in pixels)
+                                  )
+        coloraxis_showscale = True
+    else:
+        coloraxis_colorbar = None
+        coloraxis_showscale = False
+    fig.update_layout(title=dict(
+        text=f'{pixel_metadata.get("target", "")} {pixel_metadata.get("author", "")}',
+        font=dict(size=12)
+    ),
+        coloraxis_showscale=coloraxis_showscale,
+        coloraxis_colorbar=coloraxis_colorbar,
+        xaxis=dict(showticklabels=False), yaxis=dict(showticklabels=False),
+        showlegend=False, margin=dict(l=20, b=20, t=20, r=20),
+        shapes=mask_shapes)
 
-    wcs_di = dict(pixel_data.wcs.to_header())
-    return fig, mask.tolist(), wcs_di
+    return fig, mask.tolist()
+
+
+def download_selected_pixel(selected_rows, table_data, pixel_di, size):
+    pixel_args = parse_table_data(selected_rows, table_data)
+    # restore SearchResults
+    pixel_table = Table.from_pandas(pd.DataFrame.from_dict(pixel_di))
+    pixel = lightkurve.SearchResult(pixel_table)
+    if len(pixel) <= pixel_args['#']:
+        raise PreventUpdate  # todo specify this exception
+    if pixel_args.get('author', '') == 'TESScut':
+        # lk cache it in .lighkurve/... folder but can't found to reuse (
+        kwargs = {
+            'target_name': pixel.target_name[pixel_args['#']],
+            'mission': pixel.mission[pixel_args['#']],
+            'size': size
+        }
+        pixel_data = cache.load_ffi_fits(**kwargs)
+        if pixel_data is None:
+            pixel_data = pixel[pixel_args['#']].download(cutout_size=size)
+            cache.save_ffi_fits(pixel_data, **kwargs)
+        pixel_args['pixel_type'] = 'FFI'
+    else:
+        # lk cache it in .lighkurve/... folder
+        pixel_data = pixel[pixel_args['#']].download()
+        pixel_args['pixel_type'] = 'TPF'
+
+    # return pixel_args, pixel_data
+    return pixel_args, pixel_data
 
 
 # Synchronize masks
@@ -546,45 +634,46 @@ clientside_callback(
 )
 
 
-# @callback(
-#     [# Output("px_tess_graph", "figure", allow_duplicate=True),
-#      # Output('mask_store', 'data', allow_duplicate=True),
 @callback(
     Output('aladin_tess', 'target', allow_duplicate=True),
     Output('mask_slow_store', 'data', allow_duplicate=True),
     [Input("px_tess_graph", "clickData"),
      State("px_tess_graph", "figure"),
+     State('store_pixel_metadata', 'data'),
+     State('mask_switch', 'value'),
      State('auto_mask_switch', 'value'),
-     State('ffi_tpf_switch', 'value'),
-     State('obj_name_tess_input', 'value'),
-     State('ra_tess_input', 'value'),
-     State('dec_tess_input', 'value'),
-     State('search_tess_switch', 'value'),
-     State('radius_tess_input', 'value'),
-     State('sector_drop', 'value'),
-     State('size_ffi_input', 'value'),
      State('thresh_input', 'value')],
     prevent_initial_call=True,
 )
-def create_mask(clickData, fig, auto_mask,
-                pixel_type, obj_name, ra, dec, search_type, radius, sector, size, threshold):
+def create_mask(clickData, fig, pixel_metadata,
+                mask_type, auto_mask, threshold):
     if not auto_mask:  # todo count here pipeline mask if selected and presented
         print('leave clientside callback  only')
         raise PreventUpdate
     if clickData is None:
         logging.debug('update_mask: nothing')
         raise PreventUpdate
+
     x = int(clickData['points'][0]['x'])
     y = int(clickData['points'][0]['y'])
-    logging.debug(f'create_mask: {x}, {y}, {threshold=}')
-    # aladin_target = dash.no_update
-    target, pixel_data = search_pixel_data(pixel_type=pixel_type, obj_name=obj_name, ra=ra, dec=dec,
-                                           search_type=search_type, radius=radius, sector=sector, size=size)
-    coord = pixel_data.wcs.pixel_to_world(x, y)
-    aladin_target = f'{coord.ra.deg} {coord.dec.deg}'
-    mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel=(x, y))
-    shapes = create_shapes(mask)
-    fig["layout"]["shapes"] = shapes
+
+    aladin_target = dash.no_update
+    if mask_type == 'pipeline':
+        mask = np.array(pixel_metadata['pipeline_mask'])
+    else:
+        path_to_pixel_data = pixel_metadata['path']
+        pixel_data = lightkurve.targetpixelfile.TessTargetPixelFile(path_to_pixel_data)
+        # pixel_args, pixel_data = download_selected_pixel(selected_rows, table_data, pixel_di, size)
+        # target, pixel_data = search_pixel_data(pixel_type=pixel_type, obj_name=obj_name, ra=ra, dec=dec,
+        #                                        search_type=search_type, radius=radius, sector=sector, size=size)
+        logging.debug(f'create_mask: {x}, {y}, {threshold=}')
+        mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel=(x, y))
+        coord = pixel_data.wcs.pixel_to_world(x, y)
+        aladin_target = f'{coord.ra.deg} {coord.dec.deg}'
+
+    mask_shapes = create_shapes(mask)
+
+    fig["layout"]["shapes"] = mask_shapes
     return aladin_target, mask.tolist()
 
 
@@ -688,36 +777,30 @@ clientside_callback(
      Output('curve_graph_3', 'figure'),
      Output('store_tess_lightcurve', 'data'),
      Output('lc2_store', 'data'),
-     Output('store_tess_metadata', 'data')],
-    [Input('plot_curve_tess_button', 'n_clicks'),
-     State('ffi_tpf_switch', 'value'),
-     State('obj_name_tess_input', 'value'),
-     State('ra_tess_input', 'value'),
-     State('dec_tess_input', 'value'),
-     State('search_tess_switch', 'value'),
-     State('radius_tess_input', 'value'),
+     Output('store_tess_metadata', 'data'),
+     Output('lc_accordion', 'active_item'),
+     [Input('plot_curve_tess_button', 'n_clicks')],
+     State('store_pixel_metadata', 'data'),
      State('mask_store', 'data'),
-     State('sector_drop', 'value'),
-     State('size_ffi_input', 'value'),
-     State('thresh_input', 'value'),
      State('star_tess_switch', 'value'),
      State('sub_bkg_switch', 'value'),
      State('flatten_switch', 'value'),
      State('ordinate_switch', 'value')],
     prevent_initial_call=True
 )
-def plot_lightcurve(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius, mask_list, sector, size, threshold,
-                    star_number, sub_bkg, flatten, ordinate):
+def plot_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, flatten, ordinate):
     if n_clicks is None:
         raise PreventUpdate
-    target, pixel_data = search_pixel_data(pixel_type=pixel_type, obj_name=obj_name, ra=ra, dec=dec,
-                                           search_type=search_type, radius=radius, sector=sector, size=size)
+
+    path_to_pixel_data = pixel_metadata['path']
+    pixel_data = lightkurve.targetpixelfile.TessTargetPixelFile(path_to_pixel_data)
+
     if mask_list is None:
-        mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel='center')
-    else:
-        mask = np.array(mask_list)
-    # if sub_bkg:
-    #     pixel_data = subtract_background_inplace(pixel_data)
+        logging.warning('No aperture mask provided')
+        raise PreventUpdate
+        # mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel='center')
+    mask = np.array(mask_list)
+    # noinspection PyTypeChecker
     lc = pixel_data.to_lightcurve(aperture_mask=mask)
 
     quality_mask = lc['quality'] == 0  # mask by TESS quality
@@ -752,9 +835,10 @@ def plot_lightcurve(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius
     jsons = json.dumps(df.to_dict())
 
     time_unit = lc.time.format
-    name = lc.LABEL if lc.LABEL else target
-    lc_metadata = {'target': name, 'img': pixel_type.upper(), 'sector': lc.sector}
-    title = f'{pixel_type.upper()} {target} {lc.LABEL} sector:{lc.SECTOR}'
+    name = lc.LABEL if lc.LABEL else pixel_metadata.get('target', '')
+    lc_metadata = {'target': name, 'img': pixel_metadata.get('pixel_type', '').upper(), 'sector': lc.sector}
+    title = (f'{pixel_metadata.get("pixel_type", "").upper()} '
+             f'{pixel_metadata.get("target", "")} {lc.LABEL} sector:{lc.SECTOR}')
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=jd, y=flux,
                              hoverinfo='none',  # Important
@@ -769,11 +853,11 @@ def plot_lightcurve(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius
                       yaxis_title=yaxis_title,
                       )
     if star_number == '1':
-        return fig, dash.no_update, dash.no_update, jsons, dash.no_update, lc_metadata
+        return fig, dash.no_update, dash.no_update, jsons, dash.no_update, lc_metadata, ['accordion_item_1']
     elif star_number == '2':
-        return dash.no_update, fig, dash.no_update, dash.no_update, jsons, lc_metadata
+        return dash.no_update, fig, dash.no_update, dash.no_update, jsons, lc_metadata, ['accordion_item_2']
     else:
-        return dash.no_update, dash.no_update, fig, dash.no_update, dash.no_update, lc_metadata
+        return dash.no_update, dash.no_update, fig, dash.no_update, dash.no_update, lc_metadata, ['accordion_item_3']
 
 
 @callback(
@@ -784,7 +868,7 @@ def plot_lightcurve(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius
      State('compare_switch', 'value')],
     prevent_initial_call=True
 )
-def plot_difference(n_clicks, jsons_1, jsons_2, compar_method):
+def plot_difference(n_clicks, jsons_1, jsons_2, comparison_method):
     if n_clicks is None:
         raise PreventUpdate
     df1 = pd.DataFrame.from_dict(json.loads(jsons_1))
@@ -798,7 +882,7 @@ def plot_difference(n_clicks, jsons_1, jsons_2, compar_method):
     # lc = lc[lc['quality'] == 0]  # mask by TESS quality
     # jd = lc1['index']   # todo !!!
     jd = lc1['jd']  # todo !!!
-    if compar_method == 'divide':
+    if comparison_method == 'divide':
         flux = lc2['flux'] / lc1['flux']
         title = 'Curve2 / Curve1'
     else:
@@ -886,39 +970,31 @@ def mark_star(coord, fig, wcs_dict):
 @callback(
     [Output("table_tess_header", "children"),
      Output("data_tess_table", "data"),
-     Output("table_tess_row", "style"),  # to show the table and Title
-     Output('ra_tess_input', 'value'),
-     Output('dec_tess_input', 'value'),
-     Output('aladin_tess', 'target')],
+     Output("data_tess_table", "selected_rows"),
+     # Output("search_results_spinner", "style"),  # show the table and Title
+     Output("search_results_row", "style"),  # show the table and Title
+     Output('store_search_result', 'data')],
     [Input('search_tess_button', 'n_clicks'),
      State('ffi_tpf_switch', 'value'),
      State('obj_name_tess_input', 'value'),
      State('ra_tess_input', 'value'),
      State('dec_tess_input', 'value'),
-     State('search_tess_switch', 'value'),
      State('radius_tess_input', 'value')],
     prevent_initial_call=True
 )
-def search(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius):
+def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
     if n_clicks is None:
         raise PreventUpdate
-    if search_type == 'name':
+
+    if obj_name:
         target = obj_name
     else:
-        # ra = float(ra)
-        # dec = float(dec)
         target = f'{ra} {dec}'
+
     if pixel_type == 'ffi':
         pixel = get_ffi(target=target)
     else:
         pixel = get_tpf(target, radius=radius)
-    try:
-        target_ra_deg = pixel.ra[0]
-        target_dec_deg = pixel.dec[0]
-    except Exception as e:
-        logging.warning(e)
-        target_ra_deg = None
-        target_dec_deg = None
     data = []
     for row in pixel.table:
         data.append({
@@ -930,15 +1006,10 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, search_type, radius):
             "exptime": row["exptime"],
             "distance": row["distance"]
         })
-
-    if target_ra_deg is None or target_dec_deg is None:
-        target_ra_deg = dash.no_update
-        target_dec_deg = dash.no_update
-        aladin_target = dash.no_update
-    else:
-        aladin_target = f'{target_ra_deg} {target_dec_deg:+}'
-    return (f'Search {pixel_type.upper()} for {target}', data, {"display": "block"},
-            target_ra_deg, target_dec_deg, aladin_target)
+    # Serialize Lightkurve.SearchResult to store it
+    pixel_di = pixel.table.to_pandas().to_dict()
+    selected_row = [0] if data else []  # select the first row by default
+    return f'{pixel_type.upper()} {target}', data, selected_row, {"display": "block"}, pixel_di
 
 
 @callback(Output('download_tess_lc', 'data'),  # ------ Download -----
@@ -953,7 +1024,6 @@ def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
     if js_lightcurve is None:
         raise PreventUpdate
     # bstring is "bytes"
-    from skvo_veb.utils.handler import deserialise
     import io
     df = pd.DataFrame.from_dict(json.loads(js_lightcurve))
     if 'left' in di_metadata and 'right' in di_metadata:
@@ -979,22 +1049,6 @@ def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
 
     ret = dcc.send_bytes(my_weird_string, outfile)
     return ret
-
-
-# @callback(
-#     Output('table_tess_header', 'children', allow_duplicate=True),
-#     Input('curve_graph_1', 'relayoutData'),
-#     prevent_initial_call=True
-# )
-# def update_zoom_select_data(relayout_data):
-#     print('update_zoom_select_data')
-#     if 'xaxis.range[0]' in relayout_data and 'xaxis.range[1]' in relayout_data:
-#         left_border = relayout_data['xaxis.range[0]']
-#         right_border = relayout_data['xaxis.range[1]']
-#         print(f"Left border: {left_border}, Right border: {right_border}")
-#         raise PreventUpdate
-#
-#     raise PreventUpdate
 
 
 @callback(

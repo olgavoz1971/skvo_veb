@@ -2,7 +2,6 @@ import io
 import json
 import logging
 from io import StringIO
-from select import select
 
 import numpy as np
 import pandas as pd

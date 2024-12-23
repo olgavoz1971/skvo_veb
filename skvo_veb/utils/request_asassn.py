@@ -93,8 +93,10 @@ def load_asassn_lightcurve(gaia_id: int, band='g', force_update=False) -> dict:
                     _store_in_cache(gaia_id, pd.DataFrame())
                     raise DBException(f'The source Gaia DR3 {gaia_id} was not found in the ASAS-SN database')
                 if hasattr(res, 'catalog_info'):
+                    # res.catalog_info.replace({float('nan'): None}, inplace=True)
                     epoch = getattr(res.catalog_info, 'epoch', [None])[0]
                     period = getattr(res.catalog_info, 'period', [None])[0]
+                    # epoch = None if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
                     epoch = 0 if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
                     period = None if period is None or (isinstance(period, float) and isnan(period)) else period
             except DBException:

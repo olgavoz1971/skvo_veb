@@ -2,7 +2,6 @@ import logging
 
 from dash import register_page, html, dcc, callback, clientside_callback, Input, Output, State
 from dash.exceptions import PreventUpdate
-from plotly.colors import qualitative as qq
 import plotly.express as px
 import dash_bootstrap_components as dbc
 
@@ -23,7 +22,6 @@ def layout(source_id=None, band='G'):
     if source_id is None:
         header_txt = 'Request Gaia lightcurve'
     else:
-
         header_txt = f'Gaia lightcurve\n{source_id} {band}'
     # header = html.Div(id='h1-gaia', children=[html.H1(h1_txt, className='text-primary text-left fs-3'),
     #                                             html.H2(header_txt, className='text-primary text-left fs-3')])
@@ -143,11 +141,10 @@ def load_new_source(_1, _2, source_id, band, phase_view):
     if source_id is None or source_id == '':
         raise PreventUpdate
     jdict = {'lightcurve': {}, 'metadata': {}}
-    # prefix = 'GAIA lightcurve\nGAIA DR3' if is_like_gaia_id(source_id) else ''
-    title = 'Gaia lightcurve'
     prefix = 'GAIA DR3' if is_like_gaia_id(source_id) else ''
-    header_txt = html.Span([f'{title} {prefix} {source_id}  ', html.Em(band)])
     # header_txt = f'{prefix} {source_id} {band}'
+    title = 'Gaia lightcurve'
+    header_txt = html.Span([f'{title} {prefix} {source_id}  ', html.Em(band)])
     try:
         logging.info(f'Load source data from gaia db: {source_id=}')
         jdict = handler.load_lightcurve(source_id, band, catalogue)
@@ -355,6 +352,7 @@ clientside_callback(    # select_data
     State('store-gaia-lightcurve', 'data'),
     prevent_initial_call=True
 )
+
 
 clientside_callback(    # plot_lightcurve_store
     """

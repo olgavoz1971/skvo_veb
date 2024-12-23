@@ -1,7 +1,6 @@
 import logging
 import re
 
-# import dash
 from astropy.coordinates import Angle
 # noinspection PyUnresolvedReferences
 from astropy.units import deg, hourangle
@@ -66,7 +65,7 @@ def layout(coords='0 0', radius='10', catalogue='Gaia'):
                          style={"font-size": 14, 'font-family': 'courier'}),
                 # style={"white-space": "pre", "font-size": 14, 'font-family': 'courier'})
                 dbc.Label(id='label-debug', children='Nothing')
-            ], className="gx-2", lg=5, md=5, sm=12)
+            ], className="gx-2", lg=5, md=5, sm=12)  # p-0 -- without padding
         ])
         # response = table_coord
     except Exception as e:

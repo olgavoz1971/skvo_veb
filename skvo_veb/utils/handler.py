@@ -51,7 +51,7 @@ def _decipher_source_id(source_id):
 
 
 def load_source(source_id: str, catalogue: str) -> dict:
-    assert catalogue == 'Gaia'  # todo add other databases
+    assert catalogue == 'Gaia', f'We don\'t work with {catalogue} catalogue'  # todo add other databases
     gaia_id = _decipher_source_id(source_id)  # M.b. long remote call. Or m.b. not
     # jdict_main, jdict_gaia_params, jdict_photometric_params, jdict_cross_ident = request_gaia.load_source(gaia_id)
     dict_source = request_gaia.load_source(gaia_id)
@@ -59,7 +59,8 @@ def load_source(source_id: str, catalogue: str) -> dict:
 
 
 def load_lightcurve(source_id: str, band: str, catalogue: str, force_update=False) -> dict:
-    assert catalogue in ['Gaia', 'Asassn']  # todo add other databases
+    assert catalogue in ['Gaia', 'Asassn'], 'Sorry, But we don\'t work with lightcurves from {catalogue} yet'
+    # todo add other databases
     gaia_id = _decipher_source_id(source_id)  # M.b. long remote call. Or m.b. not
     if catalogue == 'Gaia':
         return request_gaia.load_gaia_lightcurve(gaia_id, band)
@@ -83,7 +84,7 @@ def _make_lc_filename(jdict_metadata: dict, table_format: str):
     return outfile
 
 
-def get_format_list():
+def get_format_list():      # todo move it into kurve
     return list(kurve.format_dict.keys())
 
 
