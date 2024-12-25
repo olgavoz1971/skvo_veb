@@ -3,7 +3,7 @@ aiohappyeyeballs==2.4.3
 aiohttp==3.10.8
 aioitertools==0.12.0
 aiosignal==1.3.1
-aladin_lite_react_component @ file:///home/voz/projects/UPJS/VO/skvo_veb_project/third_party/aladin_lite_react_component-0.0.2.tar.gz#sha256=79283ec54703c5fec943525f03dfb71f4bcf17b3cb9eb6af3d868c0d18ee719f
+aladin_lite_react_component @ file://./third_party/aladin_lite_react_component-0.0.3.tar.gz
 astropy==6.1.4
 astropy-iers-data==0.2024.9.30.0.32.59
 astroquery==0.4.7
@@ -76,7 +76,7 @@ scikit-learn==1.5.2
 scipy==1.14.1
 SecretStorage==3.3.3
 six==1.16.0
-skypatrol @ file:///home/voz/projects/UPJS/VO/skvo_veb_project/third_party/skypatrol
+git+https://github.com/olgavoz1971/skypatrol.git@master#egg=sky_patrol
 soupsieve==2.6
 tenacity==9.0.0
 threadpoolctl==3.5.0
@@ -92,6 +92,4 @@ wrapt==1.16.0
 xyzservices==2024.9.0
 yarl==1.13.1
 zipp==3.20.2
-
-aladin_lite_react_component~=0.0.2
 setuptools~=70.1.1
