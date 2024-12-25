@@ -19,6 +19,7 @@ from dash.exceptions import PreventUpdate
 from lightkurve import search_targetpixelfile, search_tesscut
 from lightkurve.correctors import PLDCorrector
 
+from skvo_veb.components import message
 # TESS stuff
 from skvo_veb.utils import tess_cache as cache, handler, kurve
 from skvo_veb.utils.my_tools import PipeException
@@ -143,7 +144,7 @@ def layout():
                             labelStyle={'display': 'inline-block', 'padding': '5px'}),
                     ], md=2, sm=12, style={'padding': '10px', 'background': 'Silver'}),  # SearchTools
                     dbc.Col([
-                        dbc.Spinner(
+                        dbc.Spinner(children=[
                             html.Div([
                                 dbc.Row([
                                     dbc.Col([
@@ -182,14 +183,15 @@ def layout():
                                                       'textAlign': 'left'},
                                     )
                                 ]),
-                            ]),  # id="search_results_row", style={"display": "none"}),  # Search results
-                            # id="search_results_spinner",
-                            # style={"display": "none"},
+                            ], id="search_results_row", style={"display": "none"}),  # Search results
+                            html.Div(id='div_tess_alert', style={"display": "none"}),       # Alert
+                        ]
                         ),
-                    ], id="search_results_row", style={"display": "none"}, md=10, sm=12),
+                    ], md=10, sm=12),
+                    # ], id="search_results_row", style={"display": "none"}, md=10, sm=12),
                 ], style={'marginBottom': '10px'}),  # Search and SearchResults
                 dbc.Spinner(
-                    dbc.Label(id="download_sector_result", children='label text',
+                    dbc.Label(id="download_sector_result", children='',
                               style={"color": "green", "text-align": "center"}),
                     spinner_style={
                         # "display": "flex",
@@ -284,17 +286,17 @@ def layout():
                                   # style={'height': '45vh', 'aspect-ratio': '1'}),
                                   # style={'height': '40vh', 'aspect-ratio': '1'}
                                   ),
-                    ], md=3, sm=6),  # pixel graph
+                    ], align='center', md=3, sm=6),  # pixel graph
                     dbc.Col([
                         aladin_lite_react_component.AladinLiteReactComponent(
                             id='aladin_tess',
                             width=300,
-                            height=200,
+                            height=250,
                             fov=round(2 * 10) / 60,  # in degrees
                             target='02:03:54 +42:19:47',
                             # stars=stars,
                         ),
-                    ], md=4, sm=6)  # aladin
+                    ], align='center', md=4, sm=6)  # aladin
                 ], style={'marginBottom': '10px'}),  # align='center'),  # Px graph and Aladin
                 dbc.Row([
                     dbc.Col([
@@ -368,7 +370,7 @@ def layout():
                                 # ], direction='horizontal', gap=2)
                             ], width='auto'),  # select a format
                         ], justify='between',
-                            className='gy-1',   # class adds vertical gaps between folded columns
+                            className='gy-1',  # class adds vertical gaps between folded columns
                             style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
                     ], md=2, sm=2, style={'padding': '10px', 'background': 'Silver'}),  # Light Curve Tools
                     dbc.Col([
@@ -376,18 +378,18 @@ def layout():
                             dbc.AccordionItem(item_id='accordion_item_1', children=[
                                 dcc.Graph(id='curve_graph_1',
                                           config={'displaylogo': False},
-                                          style={'height': '30vh'}),  # 100% of the viewport height
+                                          style={'height': '40vh'}),  # 100% of the viewport height
                             ],
                                               title='First Light Curve'),
                             dbc.AccordionItem([
                                 dcc.Graph(id='curve_graph_2',
                                           config={'displaylogo': False},
-                                          style={'height': '30vh'}),  # 100% of the viewport height
+                                          style={'height': '40vh'}),  # 100% of the viewport height
                             ], title='Second Light Curve', item_id='accordion_item_2'),
                             dbc.AccordionItem([
                                 dcc.Graph(id='curve_graph_3',
                                           config={'displaylogo': False},
-                                          style={'height': '30vh'}),  # 100% of the viewport height
+                                          style={'height': '45vh'}),  # 100% of the viewport height
                             ], title='Third Light Curve', item_id='accordion_item_3'),
                         ], id='lc_accordion', start_collapsed=True, always_open=True)  # Light Curves
                     ], md=10, sm=10),  # Light Curves Accordion
@@ -635,7 +637,7 @@ clientside_callback(
 
 
 @callback(
-    Output('aladin_tess', 'target', allow_duplicate=True),
+    # Output('aladin_tess', 'target', allow_duplicate=True),
     Output('mask_slow_store', 'data', allow_duplicate=True),
     [Input("px_tess_graph", "clickData"),
      State("px_tess_graph", "figure"),
@@ -657,7 +659,7 @@ def create_mask(clickData, fig, pixel_metadata,
     x = int(clickData['points'][0]['x'])
     y = int(clickData['points'][0]['y'])
 
-    aladin_target = dash.no_update
+    # aladin_target = dash.no_update
     if mask_type == 'pipeline':
         mask = np.array(pixel_metadata['pipeline_mask'])
     else:
@@ -668,13 +670,14 @@ def create_mask(clickData, fig, pixel_metadata,
         #                                        search_type=search_type, radius=radius, sector=sector, size=size)
         logging.debug(f'create_mask: {x}, {y}, {threshold=}')
         mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel=(x, y))
-        coord = pixel_data.wcs.pixel_to_world(x, y)
-        aladin_target = f'{coord.ra.deg} {coord.dec.deg}'
+        # coord = pixel_data.wcs.pixel_to_world(x, y)
+        # aladin_target = f'{coord.ra.deg} {coord.dec.deg}'
 
     mask_shapes = create_shapes(mask)
 
     fig["layout"]["shapes"] = mask_shapes
-    return aladin_target, mask.tolist()
+    # return aladin_target, mask.tolist()
+    return mask.tolist()
 
 
 clientside_callback(
@@ -971,9 +974,10 @@ def mark_star(coord, fig, wcs_dict):
     [Output("table_tess_header", "children"),
      Output("data_tess_table", "data"),
      Output("data_tess_table", "selected_rows"),
-     # Output("search_results_spinner", "style"),  # show the table and Title
      Output("search_results_row", "style"),  # show the table and Title
-     Output('store_search_result', 'data')],
+     Output('store_search_result', 'data'),
+     Output('div_tess_alert', 'children'),
+     Output('div_tess_alert', 'style')],
     [Input('search_tess_button', 'n_clicks'),
      State('ffi_tpf_switch', 'value'),
      State('obj_name_tess_input', 'value'),
@@ -983,6 +987,7 @@ def mark_star(coord, fig, wcs_dict):
     prevent_initial_call=True
 )
 def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
+    # lll
     if n_clicks is None:
         raise PreventUpdate
 
@@ -990,26 +995,42 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
         target = obj_name
     else:
         target = f'{ra} {dec}'
+    try:
+        if pixel_type == 'ffi':
+            pixel = get_ffi(target=target)
+        else:
+            pixel = get_tpf(target, radius=radius)
 
-    if pixel_type == 'ffi':
-        pixel = get_ffi(target=target)
-    else:
-        pixel = get_tpf(target, radius=radius)
-    data = []
-    for row in pixel.table:
-        data.append({
-            '#': row['#'],
-            'mission': row['mission'],
-            'year': row['year'],
-            'target': row["target_name"],
-            "author": row["author"],
-            "exptime": row["exptime"],
-            "distance": row["distance"]
-        })
-    # Serialize Lightkurve.SearchResult to store it
-    pixel_di = pixel.table.to_pandas().to_dict()
-    selected_row = [0] if data else []  # select the first row by default
-    return f'{pixel_type.upper()} {target}', data, selected_row, {"display": "block"}, pixel_di
+        data = []
+        for row in pixel.table:
+            data.append({
+                '#': row['#'],
+                'mission': row['mission'],
+                'year': row['year'],
+                'target': row["target_name"],
+                "author": row["author"],
+                "exptime": row["exptime"],
+                "distance": row["distance"]
+            })
+        # Serialize Lightkurve.SearchResult to store it
+        pixel_di = pixel.table.to_pandas().to_dict()
+        selected_row = [0] if data else []  # select the first row by default
+        content_style = {'display': 'block'}  # show the table
+        alert_style = {'display': 'none'}  # hide the alert
+        alert_message = ''
+
+    except Exception as e:
+        logging.warning(f'Error: {e}')  # todo add error message instead of Table with results
+        alert_message = message.warning_alert(e)
+        alert_style = {'display': 'block'}  # show the alert
+        data = dash.no_update
+        selected_row = []
+        pixel_di = {}
+        content_style = {'display': 'none'}  # hide the table
+        # raise PreventUpdate
+
+    # return f'{pixel_type.upper()} {target}', data, selected_row, {"display": "block"}, pixel_di
+    return f'{pixel_type.upper()} {target}', data, selected_row, content_style, pixel_di, alert_message, alert_style
 
 
 @callback(Output('download_tess_lc', 'data'),  # ------ Download -----
