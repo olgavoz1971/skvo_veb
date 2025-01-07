@@ -68,10 +68,10 @@ def layout():
           State('inp-radius', 'value'),
           prevent_initial_call=True)
 def handle_input(_1, _2, id_coord_str, radius):
-    catalogue = 'Gaia'
     if is_it_coord(id_coord_str):
         return f'/igebc/coo?coords={id_coord_str}&radius={radius}'
-    return f'/igebc/star?source_id={id_coord_str}&catalogue={catalogue}'
+    return f'/igebc/star?source_id={id_coord_str}'
+    # return f'/igebc/star?source_id={id_coord_str}&catalogue={catalogue}'
 
 
 # @callback(Output('inp-id-coord', 'value'),

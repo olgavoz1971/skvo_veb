@@ -53,3 +53,8 @@ def tcb2tdb(jd_tcb):
 def explain_exception(e):
     # return f'{type(e).__name__}: {e}'
     return repr(e)
+
+
+def main_name(cross_ident: dict):
+    return cross_ident['vsx'] if cross_ident['vsx'] is not None else cross_ident['simbad'] \
+        if cross_ident['simbad'] is not None else f'Gaia DR3 {cross_ident["gaia_id"]}'

@@ -1,13 +1,24 @@
-from dash import Dash, dcc  # html, dcc, callback, Input, Output
+from dash import Dash, DiskcacheManager  # dcc, html, dcc, callback, Input, Output
 import dash
 import dash_bootstrap_components as dbc
 import flask
+
 from skvo_veb.components import footer
 import logging
-
 logging.basicConfig(level=logging.DEBUG)
 
+from os import getenv
+from dotenv import load_dotenv
+load_dotenv()  # Note: it is important to load dotenv here,
+# because celery worker runs this file and not main.py or *.wsgi
+
+
 server = flask.Flask(__name__)
+
+USE_REDIS = getenv('USE_REDIS', 'false').upper() == 'TRUE' or getenv('USE_REDIS', 'false') == '1'
+
+# USE_REDIS = True
+# USE_REDIS = False
 
 
 @server.route("/")
@@ -15,7 +26,25 @@ def home():
     return app.index()
 
 
-app = Dash(__name__, server=server, use_pages=True, suppress_callback_exceptions=True)
+# Configure background callbacks
+if USE_REDIS:
+    from celery import Celery
+    from dash import CeleryManager
+
+    celery_app = Celery(__name__,
+                        broker='redis://localhost:6379/0',
+                        backend='redis://localhost:6379/1',
+                        broker_connection_retry_on_startup=True)
+    background_callback_manager = CeleryManager(celery_app)
+    print(f"Using background manager: {background_callback_manager}")
+else:
+    import diskcache
+    diskcache_dir = getenv('DISKCACHE_DIR')
+    background_callback_manager = DiskcacheManager(diskcache.Cache(diskcache_dir))
+
+
+app = Dash(__name__, server=server, use_pages=True,
+           background_callback_manager=background_callback_manager)  # , suppress_callback_exceptions=True)
 # todo replace it with app.validation_layout
 app.title = 'Gaia VEB lightcurves Dashboard'
 
@@ -29,8 +58,6 @@ app.layout = dbc.Container([
         ),
     ], className="flex-grow-1"  # to make sure it expands to fill the available horizontal space
     ),
-
-    # html.H1('Gaia VEB Multi-page dash app', className="text-primary text-center fs-3"),
     dash.page_container,
     # dcc.Loading(
     #     id='page-loading-indicator',

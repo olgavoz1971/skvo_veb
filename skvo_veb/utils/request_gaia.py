@@ -12,9 +12,10 @@ import psycopg2.extras
 from astropy.coordinates import Angle
 from pandas import DataFrame
 
-from skvo_veb.utils.kurve import cook_lightcurve
+from skvo_veb.utils import ask_simbad
+from skvo_veb.utils.curve_dash import CurveDash
 from skvo_veb.utils.coord import deg_to_asec, parse_coord_to_skycoord
-from skvo_veb.utils.my_tools import DBException, timeit
+from skvo_veb.utils.my_tools import DBException, timeit, PipeException, is_like_gaia_id
 
 path_to_test_data = 'test_data/'
 
@@ -247,7 +248,7 @@ def _request_main_data(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -> 
     return dict(row)
 
 
-def _request_lightcurve_with_metadata(gaia_id: int, band: str) -> dict:
+def _request_lightcurve_with_metadata(gaia_id: int, band: str) -> CurveDash:
     conn = psycopg2.connect(
         host=getenv("DB_HOST"),
         dbname=getenv("DB_NAME"),
@@ -258,20 +259,30 @@ def _request_lightcurve_with_metadata(gaia_id: int, band: str) -> dict:
     # -----------------------------  Extract the variable's freq from the gaia prop table -----------------
     metadata = _request_fold_params(gaia_id, cursor)
 
-    metadata['band'] = band
-    metadata['gaia_id'] = gaia_id
+    # metadata['band'] = band
+    # metadata['gaia_id'] = gaia_id
 
     cross_ident = _request_cross_ident(gaia_id, cursor)
-    metadata['cross_ident'] = cross_ident
+    # metadata['cross_ident'] = cross_ident
 
     #  ------------------------------ Request photometric data --------------------------------------------
     # We need period and epoch to fold the lightcurve
     epoch = metadata.get('epoch_gaia', None)
     period = metadata.get('period', None)
-    lightcurve = _request_lightcurve(gaia_id, band, cursor, epoch, period)
+    # lightcurve = _request_lightcurve(gaia_id, band, cursor, epoch, period)
+    df = _request_lightcurve(gaia_id, band, cursor)
 
     conn.commit()
-    return dict(metadata=metadata, lightcurve=lightcurve)
+    lcd = CurveDash(gaia_id=gaia_id,
+                    jd=df['jd'], flux=df['flux'], flux_err=df['flux_err'],
+                    band=band,
+                    timescale='tcb',
+                    flux_unit=str(electron / u.s),
+                    epoch=epoch,
+                    period=period, period_unit='d',
+                    cross_ident=cross_ident)
+
+    return lcd
 
 
 @timeit
@@ -311,8 +322,8 @@ def _request_fold_params(gaia_id: int, cursor: psycopg2.extras.RealDictCursor) -
 
 
 @timeit
-def _request_lightcurve(gaia_id: int, band: str, cursor: psycopg2.extras.RealDictCursor,
-                        epoch_jd: float | None, period_day: float | None) -> dict:
+def _request_lightcurve(gaia_id: int, band: str, cursor: psycopg2.extras.RealDictCursor) -> DataFrame:
+                        # epoch_jd: float | None, period_day: float | None) -> DataFrame:
     # cursor.execute(f'select jdobs,flux,flux_err  from {psql_table_photo} where gaia_id = {gaia_id} '
     #                f'and band ilike \'{band}\'')
     cursor.execute(f'select jdobs,flux,flux_err  from {psql_table_photo} where gaia_id = %s '
@@ -321,18 +332,20 @@ def _request_lightcurve(gaia_id: int, band: str, cursor: psycopg2.extras.RealDic
     if len(rows) < 1:
         raise DBException(f'The lightcurve in {band}-band of source with {gaia_id=} not found in {psql_table_photo}')
     try:
+        # todo: Check this! lll
         df = pd.DataFrame(rows)
         df['jdobs'] += jd0_gaia
         df.rename(columns={'jdobs': 'jd'}, inplace=True)
-        lightcurve = cook_lightcurve(df, timescale='tcb',
-                                     flux_unit=str(electron / u.s),
-                                     flux_err_unit=str(electron / u.s),
-                                     epoch_jd=epoch_jd, period_day=period_day)
+        return df
+        # lightcurve = cook_lightcurve(df, timescale='tcb',
+        #                              flux_unit=str(electron / u.s),
+        #                              flux_err_unit=str(electron / u.s),
+        #                              epoch_jd=epoch_jd, period_day=period_day)
     except Exception as e:
         error_str = f'An exception connected with lightcurve of {gaia_id} occurred: {repr(e)}'
         logging.warning(error_str)
         raise DBException(error_str)
-    return lightcurve
+    # return lightcurve
 
 
 def _debug_get_main_identifier(gaia_id: int) -> str:
@@ -341,24 +354,25 @@ def _debug_get_main_identifier(gaia_id: int) -> str:
     return res
 
 
-def _debug_load_lightcurve_with_metadata(gaia_id, band) -> dict:
+def _debug_load_lightcurve_with_metadata(gaia_id, band) -> CurveDash:
     band = band.upper()
     filename_lc = f'{path_to_test_data}{gaia_id}_{band}_gaia.dat'
     period = None
-    period_unit = None
+    # period_unit = None
     try:
         with open(filename_lc, 'r') as f:
             head = f.readline()
         if len(head) > 0 and head[0] == '#':
             try:
                 period = float(head.rstrip().split('=')[-1])
-                period_unit = str(day)
+                # period_unit = str(day)
             except Exception as e:
                 logging.warning(repr(e))
+        # lc_arr = np.loadtxt(filename_lc)[:5, :]
         lc_arr = np.loadtxt(filename_lc)
-        df = pd.DataFrame(columns=['jdobs', 'flux', 'flux_err'], data=lc_arr)
-        df['jdobs'] += jd0_gaia
-        df.rename(columns={'jdobs': 'jd'}, inplace=True)
+        # df = pd.DataFrame(columns=['jdobs', 'flux', 'flux_err'], data=lc_arr)
+        # df['jdobs'] += jd0_gaia
+        # df.rename(columns={'jdobs': 'jd'}, inplace=True)
 
         dict_prop_gaia = _debug_load_gaia_params(gaia_id)
         try:
@@ -367,20 +381,35 @@ def _debug_load_lightcurve_with_metadata(gaia_id, band) -> dict:
             logging.warning(repr(e))
             epoch_gaia = None
         epoch_new = epoch_gaia - 0.1
-        lightcurve = cook_lightcurve(df, timescale='tcb',
-                                     flux_unit=str(electron / u.s),
-                                     flux_err_unit=str(electron / u.s),
-                                     epoch_jd=epoch_gaia, period_day=period)
 
+        # def __init__(self, serialized: str | None = None,
+        #              jd=None, flux=None, flux_err=None,
+        #              name: str = '', time_unit: str = '', flux_unit: str = '',
+        #              timescale: str | None = None,
+        #              period: float | None = None, period_unit: str = '',
+        #              epoch: float | None = None):
         cross_ident = _debug_load_cross_ident(gaia_id)
+        lcd = CurveDash(gaia_id=gaia_id,
+                        jd=lc_arr[:, 0] + jd0_gaia, flux=lc_arr[:, 1], flux_err=lc_arr[:, 2],
+                        band=band,
+                        timescale='tcb',
+                        flux_unit=str(electron / u.s),
+                        epoch=epoch_gaia,
+                        period=period, period_unit='d',
+                        cross_ident=cross_ident)
+        # lightcurve = cook_lightcurve(df, timescale='tcb',
+        #                              flux_unit=str(electron / u.s),
+        #                              flux_err_unit=str(electron / u.s),
+        #                              epoch_jd=epoch_gaia, period_day=period)
 
     except FileNotFoundError:
         raise DBException(f'Seems like we don\'t have debug data for {gaia_id=} {band=}')
 
-    return dict(lightcurve=lightcurve,
-                metadata=dict(gaia_id=gaia_id, period=period, period_unit=period_unit,
-                              epoch_gaia=epoch_gaia, epoch_new=epoch_new, band=band,
-                              cross_ident=cross_ident))
+    return lcd
+    # return dict(lightcurve=lightcurve,
+    #             metadata=dict(gaia_id=gaia_id, period=period, period_unit=period_unit,
+    #                           epoch_gaia=epoch_gaia, epoch_new=epoch_new, band=band,
+    #                           cross_ident=cross_ident))
 
 
 def _debug_load_main_data(gaia_id=5284186916701857536) -> dict:  # todo This is a debug method
@@ -556,7 +585,11 @@ def _load_source_data(gaia_id):
     return jdict_main, jdict_prop_gaia, jdict_prop_new, jdict_cross_ident, jdict_lamost
 
 
-def load_source(gaia_id: int) -> dict:
+def load_source_params(gaia_id: int) -> dict:
+    """
+    Loads data for a given Gaia ID from the various tables of the local PostgresSQL database
+    Processes and converts the loaded data into dictionary format
+    """
     try:
         gaia_id_int = int(gaia_id)
     except (ValueError, TypeError):
@@ -579,9 +612,7 @@ def load_source(gaia_id: int) -> dict:
                 jdict_cross_ident=jdict_cross_ident, jdict_lamost=jdict_lamost)
 
 
-def load_gaia_lightcurve(gaia_id: int, band: str) -> dict:
-    # todo: add into metadata the source name and band. And, m.b., fold-data?
-    # todo: Yes, and fold-data
+def load_gaia_lightcurve(gaia_id: int, band: str) -> CurveDash:
     try:
         gaia_id_int = int(gaia_id)
     except (ValueError, TypeError):
@@ -601,7 +632,36 @@ if __name__ == '__main__':
     gaia_name_test = 5284186916701857536
     band_test_gaia = 'G'
     # band_test_gaia = 'BP'
-    res_ = load_source(gaia_name_test)
+    res_ = load_source_params(gaia_name_test)
     print(res_)
     di_p_g = _debug_load_gaia_params()
     print(di_p_g)
+
+
+# todo: move into some common file
+def decipher_source_id(source_id):
+    if isinstance(source_id, int) and source_id > 0:  # Is it an integer identifier?
+        gaia_id = source_id
+        return gaia_id
+    if not isinstance(source_id, str):  # Is it a string?
+        raise PipeException(f'Unappropriated type of source identification {source_id}')  # Bad for you...
+    # So, it is a string
+    if is_like_gaia_id(source_id):  # A string with an integer identifier?
+        gaia_id = int(source_id)
+        return gaia_id
+    # m.b. something like ''Gaia DR3 123345':
+    if (gaia_id := ask_simbad.extract_gaia_id(source_id)) is not None:  # short call
+        return gaia_id
+
+    # M.b. this name is present in tho local crossident:
+    if (gaia_id := extract_gaia_id(source_id)) is not None:
+        return gaia_id
+
+    # Suppose it is a simbad-resolvable name:
+    if (gaia_id := ask_simbad.get_gaia_id_by_simbad_name(source_id)) is not None:  # long remote call
+        return gaia_id
+
+    # M.b. at least Vizier will be able to find it in the Gaia VEB table? This happens...
+    if (gaia_id := ask_simbad.get_gaia_id_from_gaia_veb_table(source_id)) is None:  # very long remote call
+        raise DBException(f'Source {source_id} is not found by Simbad')  # Bad for you...
+    return gaia_id

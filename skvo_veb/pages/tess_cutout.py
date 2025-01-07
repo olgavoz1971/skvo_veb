@@ -1,4 +1,3 @@
-import json
 import logging
 
 import aladin_lite_react_component
@@ -13,20 +12,21 @@ import plotly.graph_objects as go
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.wcs import WCS
-from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback
+from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback, set_props
 from dash.dash_table import DataTable
 from dash.exceptions import PreventUpdate
-from lightkurve import search_targetpixelfile, search_tesscut
+from lightkurve import search_targetpixelfile, search_tesscut, LightkurveError
 from lightkurve.correctors import PLDCorrector
 
 from skvo_veb.components import message
-# TESS stuff
-from skvo_veb.utils import tess_cache as cache, handler, kurve
+from skvo_veb.utils import tess_cache as cache
+from skvo_veb.utils.curve_dash import CurveDash
 from skvo_veb.utils.my_tools import PipeException
 
-register_page(__name__, name='TESS',
+register_page(__name__, name='TESS cutout',
+              order=3,
               path='/igebc/tess',
-              title='TESS Curver Tool',
+              title='TESS cutout Tool',
               in_navbar=True)
 
 
@@ -57,6 +57,7 @@ def log_gamma(data, gamma=0.9, log=True):
 switch_label_style = {'display': 'inline-block', 'padding': '5px'}  # In the row, otherwise 'block'
 # switch_label_style = {'display': 'block', 'padding': '2px'}  # In the row, otherwise 'block'
 label_font_size = '0.8em'
+stack_wrap_style = {'marginBottom': '5px', 'flexWrap': 'wrap'}
 
 
 def imshow_logscale(img, scale_method=None, show_colorbar=False, gamma=0.99, **kwargs):
@@ -110,7 +111,7 @@ def imshow_logscale(img, scale_method=None, show_colorbar=False, gamma=0.99, **k
 
 def layout():
     return dbc.Container([
-        html.H1('TESS Curver', className="text-primary text-left fs-3"),
+        html.H1('TESS Cutout Tool', className="text-primary text-left fs-3"),
         dbc.Tabs([
             dbc.Tab(label='Search Sector', children=[
                 dbc.Row([
@@ -132,8 +133,10 @@ def layout():
                             dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
                                       style={'width': '100%'}),
                         ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                        dbc.Button('Search', id='search_tess_button', size="sm",
-                                   style={'width': '100%'}),
+                        dbc.Stack([
+                            dbc.Button('Search', id='search_tess_button', size='sm'),
+                            dbc.Button('Cancel', id='cancel_search_tess_button', size='sm', disabled=True),
+                        ], direction='horizontal', gap=2, style=stack_wrap_style),
                         dcc.RadioItems(
                             id='ffi_tpf_switch',
                             options=[
@@ -142,7 +145,8 @@ def layout():
                             ],
                             value='tpf',
                             labelStyle={'display': 'inline-block', 'padding': '5px'}),
-                    ], md=2, sm=12, style={'padding': '10px', 'background': 'Silver'}),  # SearchTools
+                    ],
+                        lg=2, md=3, sm=4, xs=12, style={'padding': '10px', 'background': 'Silver'}),  # SearchTools
                     dbc.Col([
                         dbc.Spinner(children=[
                             html.Div([
@@ -157,6 +161,8 @@ def layout():
                                                       value=11,
                                                       style={'width': '100%'}),
                                             dbc.Button('Download sector', id='download_sector_button', size="sm",
+                                                       style={'width': '100%'}),
+                                            dbc.Button('Cancel', id='cancel_download_sector_button', size="sm",
                                                        style={'width': '100%'}),
                                         ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                                     ], md=6, sm=12),
@@ -184,24 +190,21 @@ def layout():
                                     )
                                 ]),
                             ], id="search_results_row", style={"display": "none"}),  # Search results
-                            html.Div(id='div_tess_alert', style={"display": "none"}),       # Alert
+                            html.Div(id='div_tess_search_alert', style={"display": "none"}),  # Alert
                         ]
                         ),
-                    ], md=10, sm=12),
+                    ],  # md=10, xs=12),
+                        lg=10, md=9, sm=8, xs=12),
                     # ], id="search_results_row", style={"display": "none"}, md=10, sm=12),
                 ], style={'marginBottom': '10px'}),  # Search and SearchResults
-                dbc.Spinner(
+                dbc.Spinner(children=[
                     dbc.Label(id="download_sector_result", children='',
                               style={"color": "green", "text-align": "center"}),
-                    spinner_style={
-                        # "display": "flex",
-                        # "width": "100%",
-                        "align-items": "center",
-                        "justify-content": "center",
-                    }, color="primary",
-                    # fullscreen=False,
-                )
-                # ], style={'marginBottom': '10px'}, justify="center"),
+                    html.Div(id='div_tess_download_alert', style={"display": "none"}),  # Alert
+                ], spinner_style={
+                    "align-items": "center",
+                    "justify-content": "center",
+                }, color="primary")
             ], tab_id='tess_search_tab'),  # Search and SearchResults Tab
             dbc.Tab(label='Plot', children=[  # The Second Tab containing the content
                 # html.Div([
@@ -347,56 +350,83 @@ def layout():
                             ),
                         ], style={'marginBottom': '5px'}),  # curve tune
                         dbc.Row([
-                            dbc.Col(dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm",
-                                               style={'width': '100%'}),
-                                    width='auto'),
-                            dbc.Col(dbc.Button('Compare', id='plot_difference_button', size="sm",
-                                               style={'width': '100%'}),
-                                    width='auto'),
+                            dbc.Stack([
+                                # dbc.Col(
+                                dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm"),
+                                #                   style={'width': '100%'}),
+                                #         width='auto'),
+                                # dbc.Col(
+                                dbc.Button('Compare', id='plot_difference_button', size="sm"),
+                                # style={'width': '100%'}),
+                                # width='auto'),
+                            ], direction='horizontal', gap=2, style=stack_wrap_style),
                         ], justify='between',
                             className='gy-1',
                             style={'marginBottom': '5px'}),  # plot buttons
                         dbc.Row([
-                            dbc.Col([
-                                # dbc.Stack([
-                                dbc.Select(options=handler.get_format_list(),
-                                           value=handler.get_format_list()[0],
+                            # dbc.Col([
+                            dbc.Stack([
+                                dbc.Select(options=CurveDash.get_format_list(),
+                                           # handler.get_format_list(),
+                                           value=CurveDash.get_format_list()[0],
+                                           # value=handler.get_format_list()[0],
                                            id='select_tess_format',
-                                           style={'max-width': '7em'}),
-                            ], width='auto'),
-                            dbc.Col([
-                                dbc.Button('Download', id='btn_download_tess_lc', size="sm",
-                                           style={'width': '100%'}),
+                                           style={'max-width': '7em', 'font-size': label_font_size}),
+                                # ], width='auto'),
+                                # dbc.Col([
+                                dbc.Button('Download', id='btn_download_tess_lc', size="sm"),
+                                # style={'width': '100%'}),
                                 # ], direction='horizontal', gap=2)
-                            ], width='auto'),  # select a format
+                                # ], width='auto'),  # select a format
+                            ], direction='horizontal', gap=2, style=stack_wrap_style),
                         ], justify='between',
                             className='gy-1',  # class adds vertical gaps between folded columns
                             style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
-                    ], md=2, sm=2, style={'padding': '10px', 'background': 'Silver'}),  # Light Curve Tools
+                    ], lg=2, md=3, sm=4, xs=12, style={'padding': '10px', 'background': 'Silver'}),  # Light Curve Tools
                     dbc.Col([
+                        html.Div(children='', id='div_tess_lc_alert', style={'display': 'none'}),
                         dbc.Accordion([
-                            dbc.AccordionItem(item_id='accordion_item_1', children=[
+                            dbc.AccordionItem([
                                 dcc.Graph(id='curve_graph_1',
+                                          figure=go.Figure().update_layout(
+                                              title='',
+                                              margin=dict(l=0, b=20, t=30, r=20),
+                                              xaxis_title=f'time',
+                                              yaxis_title=f'flux',
+                                          ),
                                           config={'displaylogo': False},
-                                          style={'height': '40vh'}),  # 100% of the viewport height
-                            ],
-                                              title='First Light Curve'),
+                                          style={'height': '40vh'}),
+                            ], title='First Light Curve', item_id='accordion_item_1'),
                             dbc.AccordionItem([
                                 dcc.Graph(id='curve_graph_2',
+                                          figure=go.Figure().update_layout(
+                                              title='',
+                                              margin=dict(l=0, b=20, t=30, r=20),
+                                              xaxis_title=f'time',
+                                              yaxis_title=f'flux',
+                                          ),
                                           config={'displaylogo': False},
-                                          style={'height': '40vh'}),  # 100% of the viewport height
+                                          style={'height': '40vh'}),
                             ], title='Second Light Curve', item_id='accordion_item_2'),
                             dbc.AccordionItem([
                                 dcc.Graph(id='curve_graph_3',
+                                          figure=go.Figure().update_layout(
+                                              title='',
+                                              margin=dict(l=0, b=20, t=30, r=20),
+                                              xaxis_title=f'time',
+                                              yaxis_title=f'flux',
+                                          ),
                                           config={'displaylogo': False},
-                                          style={'height': '45vh'}),  # 100% of the viewport height
+                                          style={'height': '40vh'}),
                             ], title='Third Light Curve', item_id='accordion_item_3'),
-                        ], id='lc_accordion', start_collapsed=True, always_open=True)  # Light Curves
-                    ], md=10, sm=10),  # Light Curves Accordion
+                        ], id='accordion_tess_lc', start_collapsed=False,
+                            active_item=['accordion_item_1', 'accordion_item_2', 'accordion_item_3'],
+                            always_open=True)  # Light Curves
+                    ], lg=10, md=9, sm=8, xs=12),  # Light Curves Accordion
 
                 ], style={'marginBottom': '10px'}),  # Light Curves
-            ], tab_id='tess_graph_tab', id='tess_graph_tab', disabled=True),
-        ], active_tab='tess_search_tab', id='tess_tabs'),
+            ], tab_id='tess_graph_tab', id='tess_graph_tab', disabled=True),  # Plot Tab
+        ], active_tab='tess_search_tab', id='tess_tabs', style={'marginBottom': '5px'}),
         dcc.Store(id='store_search_result'),  # things showed in the data table
         dcc.Store(id='store_pixel_metadata'),  # stuff for recreation current pixel
         dcc.Store(id='mask_store'),
@@ -406,8 +436,9 @@ def layout():
         dcc.Store(id='store_tess_lightcurve'),
         dcc.Store(id='store_tess_metadata'),
         dcc.Store(id='lc2_store'),
+        # dcc.Store(id="active_item_store", storage_type="memory"),  # Allows tracking recently opened accordion item
         dcc.Download(id='download_tess_lc'),
-    ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})  #, 'height': '100vh'})
+    ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
 
 
 def create_shapes(target_mask):
@@ -490,32 +521,58 @@ def parse_table_data(selected_rows, table_data):
     return selected_data[0]
 
 
+# lll
 @callback(
     [Output('store_pixel_metadata', 'data'),
      Output('wcs_store', 'data', allow_duplicate=True),
-     Output('tess_graph_tab', 'disabled'),
-     Output('aladin_tess', 'target', allow_duplicate=True),
+     Output('aladin_tess', 'target'),
      Output('download_sector_result', 'children'),
+     Output('tess_graph_tab', 'disabled'),
      Output('tess_tabs', 'active_tab')],
     [Input('download_sector_button', 'n_clicks'),
      State('data_tess_table', 'selected_rows'),
      State('data_tess_table', 'data'),
      State('store_search_result', 'data'),
      State('size_ffi_input', 'value')],
+    running=[(Output('download_sector_button', 'disabled'), True, False),
+             (Output('cancel_download_sector_button', 'disabled'), False, True)],
+    cancel=[Input('cancel_download_sector_button', 'n_clicks')],
+
+    background=True,
     prevent_initial_call=True
 )
 def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
     if n_clicks is None:
         raise PreventUpdate
-    pixel_metadata, pixel_data = download_selected_pixel(selected_rows, table_data, pixel_di, size)
-    pixel_metadata['path'] = pixel_data.path
-    pixel_metadata['shape'] = pixel_data.shape
-    pixel_metadata['pipeline_mask'] = pixel_data.pipeline_mask
+    print('print: download_sector')
+    logging.debug('debug: download_sector')
+    logging.info('info: download_sector')
+    logging.warning('warning: download_sector')
 
-    wcs_di = dict(pixel_data.wcs.to_header())
-    aladin_target = f'{pixel_data.ra} {pixel_data.dec}'
-    return (pixel_metadata, wcs_di, False, aladin_target,
-            'Success. Switch to the next Tab', 'tess_graph_tab')
+    pixel_metadata = dash.no_update
+    wcs_di = dash.no_update
+    aladin_target = dash.no_update
+    graph_tab_disabled = dash.no_update
+    active_tab = dash.no_update
+
+    try:
+        pixel_metadata, pixel_data = download_selected_pixel(selected_rows, table_data, pixel_di, size)
+        pixel_metadata['path'] = pixel_data.path
+        pixel_metadata['shape'] = pixel_data.shape
+        pixel_metadata['pipeline_mask'] = pixel_data.pipeline_mask
+        wcs_di = dict(pixel_data.wcs.to_header())
+        aladin_target = f'{pixel_data.ra} {pixel_data.dec}'
+        sector_results_message = 'Success. Switch to the next Tab'
+        graph_tab_disabled = False
+        active_tab = 'tess_graph_tab'
+        set_props('div_tess_download_alert', {'children': '', 'style': {'display': 'none'}})
+    except Exception as e:
+        logging.warning(f'tess_cutout.download_sector {e}')
+        alert_message = message.warning_alert(e)
+        sector_results_message = ''
+        set_props('div_tess_download_alert', {'children': alert_message, 'style': {'display': 'block'}})
+
+    return pixel_metadata, wcs_di, aladin_target, sector_results_message, graph_tab_disabled, active_tab
 
 
 @callback(
@@ -598,8 +655,30 @@ def download_selected_pixel(selected_rows, table_data, pixel_di, size):
             cache.save_ffi_fits(pixel_data, **kwargs)
         pixel_args['pixel_type'] = 'FFI'
     else:
-        # lk cache it in .lighkurve/... folder
-        pixel_data = pixel[pixel_args['#']].download()
+        # lk caches it in .lighkurve/... folder
+        try:
+            pixel_data = pixel[pixel_args['#']].download()
+        except LightkurveError as e:
+            import os
+            logging.warning(f'download_selected_pixel exception: {e}')
+            # Probably, we have the corrupted cache. Let's try clean it
+            # Build the filename of cached lightcurve. See lightkurve/search.py
+            # Sorry, but I don't want to change the default cache_dir:
+            # noinspection PyProtectedMember
+            download_dir = pixel[pixel_args['#']]._default_download_dir()
+            table = pixel[pixel_args['#']].table
+            path = os.path.join(
+                download_dir.rstrip("/"),
+                "mastDownload",
+                table["obs_collection"][0],
+                table["obs_id"][0],
+                table["productFilename"][0],
+            )
+            # Remove and retry
+            logging.warning(f'Removing corrupted cache: {path}')
+            os.remove(path) if os.path.isfile(path) else None
+            pixel_data = pixel[pixel_args['#']].download()
+
         pixel_args['pixel_type'] = 'TPF'
 
     # return pixel_args, pixel_data
@@ -650,7 +729,6 @@ clientside_callback(
 def create_mask(clickData, fig, pixel_metadata,
                 mask_type, auto_mask, threshold):
     if not auto_mask:  # todo count here pipeline mask if selected and presented
-        print('leave clientside callback  only')
         raise PreventUpdate
     if clickData is None:
         logging.debug('update_mask: nothing')
@@ -775,92 +853,125 @@ clientside_callback(
 
 
 @callback(
-    [Output('curve_graph_1', 'figure'),
-     Output('curve_graph_2', 'figure'),
-     Output('curve_graph_3', 'figure'),
-     Output('store_tess_lightcurve', 'data'),
-     Output('lc2_store', 'data'),
-     Output('store_tess_metadata', 'data'),
-     Output('lc_accordion', 'active_item'),
-     [Input('plot_curve_tess_button', 'n_clicks')],
-     State('store_pixel_metadata', 'data'),
-     State('mask_store', 'data'),
-     State('star_tess_switch', 'value'),
-     State('sub_bkg_switch', 'value'),
-     State('flatten_switch', 'value'),
-     State('ordinate_switch', 'value')],
+    output=dict(
+        fig1=Output('curve_graph_1', 'figure'),
+        fig2=Output('curve_graph_2', 'figure'),
+        fig3=Output('curve_graph_3', 'figure'),
+        lc1=Output('store_tess_lightcurve', 'data'),
+        lc2=Output('lc2_store', 'data'),
+        meta=Output('store_tess_metadata', 'data'),
+    ),
+    inputs=dict(n_clicks=Input('plot_curve_tess_button', 'n_clicks')),
+    state=dict(
+        pixel_metadata=State('store_pixel_metadata', 'data'),
+        mask_list=State('mask_store', 'data'),
+        star_number=State('star_tess_switch', 'value'),
+        sub_bkg=State('sub_bkg_switch', 'value'),
+        flatten=State('flatten_switch', 'value'),
+        ordinate=State('ordinate_switch', 'value')
+    ),
     prevent_initial_call=True
 )
 def plot_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, flatten, ordinate):
     if n_clicks is None:
         raise PreventUpdate
 
-    path_to_pixel_data = pixel_metadata['path']
-    pixel_data = lightkurve.targetpixelfile.TessTargetPixelFile(path_to_pixel_data)
+    output_keys = ['fig1', 'fig2', 'fig3', 'lc1', 'lc2', 'meta']
+    output = {key: dash.no_update for key in output_keys}
 
-    if mask_list is None:
-        logging.warning('No aperture mask provided')
-        raise PreventUpdate
-        # mask = pixel_data.create_threshold_mask(threshold=threshold, reference_pixel='center')
-    mask = np.array(mask_list)
-    # noinspection PyTypeChecker
-    lc = pixel_data.to_lightcurve(aperture_mask=mask)
+    try:
+        path_to_pixel_data = pixel_metadata['path']
+        pixel_data = lightkurve.targetpixelfile.TessTargetPixelFile(path_to_pixel_data)
 
-    quality_mask = lc['quality'] == 0  # mask by TESS quality
-    lc = lc[quality_mask]
-    jd = lc.time.value
-    if ordinate == 'flux':
-        flux_unit = str(lc.flux.unit)
-        if sub_bkg:
-            yaxis_title = f'flux - bkg, {flux_unit}'
-            bkg = pixel_data.estimate_background(aperture_mask='background')
-            # noinspection PyUnresolvedReferences
-            flux = lc.flux - bkg.flux[quality_mask] * mask.sum() * u.pix  # todo check this !
+        if mask_list is None:
+            logging.warning('No aperture mask provided')
+            raise PipeException('No aperture mask provided')
+        mask = np.array(mask_list)
+        if mask.sum() < 1:
+            logging.warning('No valid aperture mask provided')
+            raise PipeException('No valid aperture mask provided')
+
+        # noinspection PyTypeChecker
+        lc = pixel_data.to_lightcurve(aperture_mask=mask)
+
+        quality_mask = lc['quality'] == 0  # mask by TESS quality
+        lc = lc[quality_mask]
+        jd = lc.time.value
+        flux_unit = None
+        flux_err = None
+        if ordinate == 'flux':
+            flux_unit = str(lc.flux.unit)
+            flux_err = lc.flux_err  # todo: take into account background errors?
+            if sub_bkg:
+                yaxis_title = f'flux - bkg, {flux_unit}'
+                bkg = pixel_data.estimate_background(aperture_mask='background')
+                # noinspection PyUnresolvedReferences
+                flux = lc.flux - bkg.flux[quality_mask] * mask.sum() * u.pix  # todo check this !
+            else:
+                yaxis_title = f'flux, {flux_unit}'
+                flux = lc.flux
+            if flatten:
+                pld = PLDCorrector(pixel_data)
+                corrected_lc = pld.correct(pld_aperture_mask=mask)
+                yaxis_title = f'PLD corrected, {flux_unit}'
+                # l, trend = lc.flatten(return_trend=True)
+                # flux = lc.flux - trend.flux
+                # flux = trend.flux
+                flux = corrected_lc.flux
+                jd = corrected_lc.time.value
+        elif ordinate == 'x':
+            yaxis_title = 'centroid_col, px'
+            flux = lc.centroid_col  # todo rename it somehow
         else:
-            yaxis_title = f'flux, {flux_unit}'
-            flux = lc.flux
-        if flatten:
-            pld = PLDCorrector(pixel_data)
-            corrected_lc = pld.correct(pld_aperture_mask=mask)
-            yaxis_title = f'PLD corrected, {flux_unit}'
-            # l, trend = lc.flatten(return_trend=True)
-            # flux = lc.flux - trend.flux
-            # flux = trend.flux
-            flux = corrected_lc.flux
-            jd = corrected_lc.time.value
-    elif ordinate == 'x':
-        yaxis_title = 'centroid_col, px'
-        flux = lc.centroid_col  # todo rename it somehow
-    else:
-        yaxis_title = 'centroid_row, px'
-        flux = lc.centroid_row  # todo rename it somehow
-    df = pd.DataFrame({'jd': jd, 'flux': flux})
-    jsons = json.dumps(df.to_dict())
+            yaxis_title = 'centroid_row, px'
+            flux = lc.centroid_row  # todo rename it somehow
+        time_unit = lc.time.format
 
-    time_unit = lc.time.format
-    name = lc.LABEL if lc.LABEL else pixel_metadata.get('target', '')
-    lc_metadata = {'target': name, 'img': pixel_metadata.get('pixel_type', '').upper(), 'sector': lc.sector}
-    title = (f'{pixel_metadata.get("pixel_type", "").upper()} '
-             f'{pixel_metadata.get("target", "")} {lc.LABEL} sector:{lc.SECTOR}')
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=jd, y=flux,
-                             hoverinfo='none',  # Important
-                             hovertemplate=None,
-                             mode='markers+lines',
-                             marker=dict(color='blue', size=6, symbol='circle'),
-                             line=dict(color='blue', width=1)))
-    fig.update_layout(title=title,
-                      showlegend=False,
-                      margin=dict(l=0, b=20, t=30, r=20),
-                      xaxis_title=f'time, {time_unit}',
-                      yaxis_title=yaxis_title,
-                      )
-    if star_number == '1':
-        return fig, dash.no_update, dash.no_update, jsons, dash.no_update, lc_metadata, ['accordion_item_1']
-    elif star_number == '2':
-        return dash.no_update, fig, dash.no_update, dash.no_update, jsons, lc_metadata, ['accordion_item_2']
-    else:
-        return dash.no_update, dash.no_update, fig, dash.no_update, dash.no_update, lc_metadata, ['accordion_item_3']
+        name = lc.LABEL if lc.LABEL else pixel_metadata.get('target', '')
+        curve_dash = CurveDash(jd=jd, flux=flux, flux_err=flux_err, name=name, time_unit=time_unit, flux_unit=flux_unit)
+
+        # df = pd.DataFrame({'jd': jd, 'flux': flux})
+        jsons = curve_dash.serialize()
+        # jsons = json.dumps(df.to_dict())
+
+        lc_metadata = {'target': name, 'img': pixel_metadata.get('pixel_type', '').upper(), 'sector': lc.sector}
+        output['meta'] = lc_metadata
+        title = (f'{pixel_metadata.get("pixel_type", "").upper()} '
+                 f'{pixel_metadata.get("target", "")} {lc.LABEL} sector:{lc.SECTOR} {pixel_metadata.get("author", "")}')
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=jd, y=flux,
+                                 hoverinfo='none',  # Important
+                                 hovertemplate=None,
+                                 mode='markers+lines',
+                                 marker=dict(color='blue', size=6, symbol='circle'),
+                                 line=dict(color='blue', width=1)))
+        fig.update_layout(title=title,
+                          showlegend=False,
+                          margin=dict(l=0, b=20, t=30, r=20),
+                          xaxis_title=f'time, {time_unit}',
+                          yaxis_title=yaxis_title,
+                          )
+
+        if star_number == '1':
+            output['fig1'] = fig
+            output['lc1'] = jsons
+            active_item = ['accordion_item_1']
+        elif star_number == '2':
+            output['fig2'] = fig
+            output['lc2'] = jsons
+            active_item = ['accordion_item_2']
+        else:
+            output['fig3'] = fig
+            active_item = ['accordion_item_3']
+        set_props('div_tess_lc_alert', {'children': '', 'style': {'display': 'none'}})
+        set_props('accordion_tess_lc', {'active_item': active_item})
+
+    except Exception as e:
+        logging.warning(f'tess_cutout.plot_lightcurve: {e}')
+        alert_message = message.warning_alert(e)
+        set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
+
+    return output
 
 
 @callback(
@@ -874,41 +985,43 @@ def plot_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, f
 def plot_difference(n_clicks, jsons_1, jsons_2, comparison_method):
     if n_clicks is None:
         raise PreventUpdate
-    df1 = pd.DataFrame.from_dict(json.loads(jsons_1))
-    # df1 = df1.reset_index()
+    fig = dash.no_update
+    try:
+        dash_lc1 = CurveDash(jsons_1)
+        dash_lc2 = CurveDash(jsons_2)
 
-    df2 = pd.DataFrame.from_dict(json.loads(jsons_2))
-    # df2 = df2.reset_index()
+        # Both curves have the same length because they were calculated from the same set of cutouts
+        jd = dash_lc1.jd  # todo: add time units
+        if comparison_method == 'divide':
+            flux = dash_lc2.flux / dash_lc1.flux
+            title = 'Curve2 / Curve1'
+        else:
+            flux = dash_lc2.flux - dash_lc1.flux
+            title = 'Curve2 - Curve1'
 
-    lc1 = Table.from_pandas(df1)
-    lc2 = Table.from_pandas(df2)
-    # lc = lc[lc['quality'] == 0]  # mask by TESS quality
-    # jd = lc1['index']   # todo !!!
-    jd = lc1['jd']  # todo !!!
-    if comparison_method == 'divide':
-        flux = lc2['flux'] / lc1['flux']
-        title = 'Curve2 / Curve1'
-    else:
-        flux = lc2['flux'] - lc1['flux']
-        title = 'Curve2 - Curve1'
-    # time_unit = lc1.time.format
-    # flux_unit = str(lc1.flux.unit)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=jd, y=flux,
+                                 hoverinfo='none',  # Important
+                                 hovertemplate=None,
+                                 mode='markers+lines',
+                                 marker=dict(color='blue', size=6, symbol='circle'),
+                                 line=dict(color='blue', width=1)))
+        fig.update_layout(title=title,
+                          showlegend=False,
+                          margin=dict(l=0, b=20, t=30, r=20),
+                          xaxis_title=f'time, {str(dash_lc1.time_unit)}',
+                          yaxis_title=f'flux',
+                          # xaxis={'dtick': 1000},
+                          # 'showticklabels': False},# todo tune it
+                          )
+        active_item = ['accordion_item_3']
+        set_props('div_tess_lc_alert', {'children': '', 'style': {'display': 'none'}})
+        set_props('accordion_tess_lc', {'active_item': active_item})
+    except Exception as e:
+        logging.warning(f'tess_cutout.plot_difference: {e}')
+        alert_message = message.warning_alert(e)
+        set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=jd, y=flux,
-                             hoverinfo='none',  # Important
-                             hovertemplate=None,
-                             mode='markers+lines',
-                             marker=dict(color='blue', size=6, symbol='circle'),
-                             line=dict(color='blue', width=1)))
-    fig.update_layout(title=title,
-                      showlegend=False,
-                      margin=dict(l=0, b=20, t=30, r=20),
-                      xaxis_title=f'time',
-                      yaxis_title=f'flux',
-                      xaxis={'dtick': 1000},
-                      # 'showticklabels': False},# todo tune it
-                      )
     return fig
 
 
@@ -976,21 +1089,35 @@ def mark_star(coord, fig, wcs_dict):
      Output("data_tess_table", "selected_rows"),
      Output("search_results_row", "style"),  # show the table and Title
      Output('store_search_result', 'data'),
-     Output('div_tess_alert', 'children'),
-     Output('div_tess_alert', 'style')],
+     Output('div_tess_search_alert', 'children'),
+     Output('div_tess_search_alert', 'style')],
     [Input('search_tess_button', 'n_clicks'),
      State('ffi_tpf_switch', 'value'),
      State('obj_name_tess_input', 'value'),
      State('ra_tess_input', 'value'),
      State('dec_tess_input', 'value'),
      State('radius_tess_input', 'value')],
+    running=[(Output('search_tess_button', 'disabled'), True, False),
+             (Output('cancel_search_tess_button', 'disabled'), False, True),
+             (Output('download_sector_result', 'children'),
+              'I\'m working... Please wait', 'Press Download to get the lightcurve')],
+    cancel=[Input('cancel_search_tess_button', 'n_clicks')],
+    background=True,
     prevent_initial_call=True
 )
 def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
-    # lll
+    # """
+    # Note: It might seem odd that I set an active accordionItem in this callback.
+    # Actually, I need to start the application with all accordionItems open to prevent
+    # unpleasant flickering during the initial loading of the lightcurve.
+    # Here, I simply close all items except the first one.
+    # """
+    print('search')
+    print(n_clicks, pixel_type, obj_name, ra, dec, radius)
     if n_clicks is None:
         raise PreventUpdate
 
+    # set_props('download_sector_result', {'children': 'I\'m working... Please wait'})
     if obj_name:
         target = obj_name
     else:
@@ -1002,6 +1129,8 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
             pixel = get_tpf(target, radius=radius)
 
         data = []
+        if len(pixel) == 0:
+            raise Exception('No data found')
         for row in pixel.table:
             data.append({
                 '#': row['#'],
@@ -1018,9 +1147,10 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
         content_style = {'display': 'block'}  # show the table
         alert_style = {'display': 'none'}  # hide the alert
         alert_message = ''
+        # set_props('download_sector_result', {'children': 'Press Download to get the lightcurve'})
 
     except Exception as e:
-        logging.warning(f'Error: {e}')  # todo add error message instead of Table with results
+        logging.warning(f'tess_cutout.search: {e}')  # todo add error message instead of Table with results
         alert_message = message.warning_alert(e)
         alert_style = {'display': 'block'}  # show the alert
         data = dash.no_update
@@ -1029,7 +1159,6 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
         content_style = {'display': 'none'}  # hide the table
         # raise PreventUpdate
 
-    # return f'{pixel_type.upper()} {target}', data, selected_row, {"display": "block"}, pixel_di
     return f'{pixel_type.upper()} {target}', data, selected_row, content_style, pixel_di, alert_message, alert_style
 
 
@@ -1040,36 +1169,61 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
           State('select_tess_format', 'value'),
           prevent_initial_call=True)
 def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
-    # todo rewrite it
-    # todo add errors
     if js_lightcurve is None:
         raise PreventUpdate
-    # bstring is "bytes"
-    import io
-    df = pd.DataFrame.from_dict(json.loads(js_lightcurve))
-    if 'left' in di_metadata and 'right' in di_metadata:
-        df = df[(df['jd'] >= di_metadata['left']) & (df['jd'] <= di_metadata['right'])]
-    tab = Table.from_pandas(df)
-    if table_format in kurve._format_dict_text:
-        my_weird_io = io.StringIO()
-    elif table_format in kurve._format_dict_bytes:
-        my_weird_io = io.BytesIO()
-    else:
-        raise PipeException(f'Unsupported format {table_format}\n Valid formats: {str(kurve.format_dict.keys())}')
-    tab.write(my_weird_io, format=table_format, overwrite=True)
-    my_weird_string = my_weird_io.getvalue()
-    if isinstance(my_weird_string, str):
-        # instead, we could choose  dcc.send_string() or dcc.send_bytes() for text or byte string in Dash application
-        # I prefer to place all io-logic in one place, here, and convert all stuff into bytes
-        my_weird_string = bytes(my_weird_string, 'utf-8')
-    my_weird_io.close()  # todo Needed?
+    try:
+        lcd = CurveDash(js_lightcurve)
+        # bstring is "bytes"
+        file_bstring = lcd.download(table_format)
 
-    outfile_base = f'lc_tess_' + "_".join(f"{key}_{value}" for key, value in di_metadata.items()).replace(" ", "_")
-    ext = kurve.get_file_extension(table_format)
-    outfile = f'{outfile_base}.{ext}'
+        outfile_base = f'lc_tess_' + "_".join(f"{key}_{value}" for key, value in di_metadata.items()).replace(" ", "_")
+        ext = lcd.get_file_extension(table_format)
+        outfile = f'{outfile_base}.{ext}'
 
-    ret = dcc.send_bytes(my_weird_string, outfile)
+        ret = dcc.send_bytes(file_bstring, outfile)
+        set_props('div_tess_lc_alert', {'children': '', 'style': {'display': 'none'}})
+
+    except Exception as e:
+        logging.warning(f'tess_cutout.download_tess_lc: {e}')
+        alert_message = message.warning_alert(e)
+        set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
+        ret = dash.no_update
+
     return ret
+
+
+# todo: Add cut out lightcurve button
+# def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
+#     # todo rewrite it
+#     # todo add errors
+#     if js_lightcurve is None:
+#         raise PreventUpdate
+#     # bstring is "bytes"
+#     import io
+#     df = pd.DataFrame.from_dict(json.loads(js_lightcurve))
+#     if 'left' in di_metadata and 'right' in di_metadata:
+#         df = df[(df['jd'] >= di_metadata['left']) & (df['jd'] <= di_metadata['right'])]
+#     tab = Table.from_pandas(df)
+#     if table_format in kurve._format_dict_text:
+#         my_weird_io = io.StringIO()
+#     elif table_format in kurve._format_dict_bytes:
+#         my_weird_io = io.BytesIO()
+#     else:
+#         raise PipeException(f'Unsupported format {table_format}\n Valid formats: {str(kurve.format_dict.keys())}')
+#     tab.write(my_weird_io, format=table_format, overwrite=True)
+#     my_weird_string = my_weird_io.getvalue()
+#     if isinstance(my_weird_string, str):
+#         # instead, we could choose  dcc.send_string() or dcc.send_bytes() for text or byte string in Dash application
+#         # I prefer to place all io-logic in one place, here, and convert all stuff into bytes
+#         my_weird_string = bytes(my_weird_string, 'utf-8')
+#     my_weird_io.close()  # todo Needed?
+#
+#     outfile_base = f'lc_tess_' + "_".join(f"{key}_{value}" for key, value in di_metadata.items()).replace(" ", "_")
+#     ext = kurve.get_file_extension(table_format)
+#     outfile = f'{outfile_base}.{ext}'
+#
+#     ret = dcc.send_bytes(my_weird_string, outfile)
+#     return ret
 
 
 @callback(

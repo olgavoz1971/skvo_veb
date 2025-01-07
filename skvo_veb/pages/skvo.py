@@ -6,7 +6,6 @@ from skvo_veb.utils.my_tools import timeit
 
 # Gaia Eclipsing Binary Catalog - IGEBC
 dash.register_page(__name__, name='SKVO',
-                   order=0,
                    title='SKVO home',
                    description='SKVO Home Page',
                    in_navbar=False,

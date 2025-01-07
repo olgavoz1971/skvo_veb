@@ -16,7 +16,9 @@ from lightkurve import TessTargetPixelFile, TessLightCurve
 
 def _get_cache_filename(prefix, extension='dill', **kwargs, ):
     """Create unique filename based on input parameters"""
+    print(f'_get_cache_filename: {prefix=} {kwargs=}')
     cache_dir = os.getenv('TESS_CACHE_DIR')
+    print(f'_get_cache_filename: {cache_dir=}')
     if not cache_dir:
         logging.warning('Environmental variable TESS_CACHE_DIR is not specified')
         return None

@@ -6,9 +6,11 @@ import dash_bootstrap_components as dbc
 import aladin_lite_react_component
 from dash import html, dcc  # , callback, Input, Output, State
 
+import skvo_veb.utils.my_tools
 from skvo_veb.components import message
-from skvo_veb.utils import handler, coord
+from skvo_veb.utils import coord, veb_parameters, request_gaia
 from skvo_veb.utils.my_tools import timeit
+from skvo_veb.utils.request_gaia import decipher_source_id
 
 dash.register_page(__name__,
                    path='/igebc/star',
@@ -37,7 +39,7 @@ def create_table(row_list: list) -> dbc.Table:
 @timeit
 def accordion_item_from_params(jdict_params: dict, title: str):
     try:
-        row_list = handler.table_from_dict(jdict_params, title)
+        row_list = veb_parameters.table_from_dict(jdict_params, title)
         if len(row_list) < 1:
             return None
         return dbc.AccordionItem(create_table(row_list), title=title)
@@ -52,7 +54,7 @@ def accordion_item_from_photometric_params(predicted_params: dict, fitted_params
     if predicted_params is None or fitted_params is None:
         return None
     try:
-        row_list = handler.photometric_param_table(predicted_params, fitted_params)
+        row_list = veb_parameters.photometric_param_table(predicted_params, fitted_params)
         return dbc.AccordionItem(create_table(row_list), title=title)
     except Exception as e:
         logging.warning(f'accordion_item_from_photometric_param {title} {repr(e)}')
@@ -76,6 +78,13 @@ def _safe_round(value: float | None, precision: float | None) -> str:
         logging.warning(f'round({value}, {precision}: {e}')
         res = ''
     return res
+
+
+def _load_source_params_gaia(source_id: str) -> dict:
+    gaia_id = decipher_source_id(source_id)  # M.b. long remote call. Or m.b. not
+    # jdict_main, jdict_gaia_params, jdict_photometric_params, jdict_cross_ident = request_gaia.load_source(gaia_id)
+    dict_source = request_gaia.load_source_params(gaia_id)
+    return dict_source  # jdict_main, jdict_gaia_params, jdict_photometric_params, jdict_cross_ident
 
 
 @timeit
@@ -145,10 +154,10 @@ def summary(jdict_main_data: dict, jdict_cross_ident: dict):  # todo add lamost 
 
 
 @timeit
-def layout(source_id=None, catalogue=None):
+def layout(source_id='AA%20And'):
     try:
-        logging.info(f'Load source data from db: {source_id} from {catalogue}')
-        dict_source = handler.load_source(source_id, catalogue)
+        logging.info(f'Load source data from db: {source_id}')
+        dict_source = _load_source_params_gaia(source_id)
         jdict_main = dict_source['jdict_main']
         gaia_id = jdict_main['gaia_id']
         jdict_gaia_params = dict_source['jdict_gaia_params']
@@ -171,7 +180,7 @@ def layout(source_id=None, catalogue=None):
         #     logging.info(f'query star gaia_id={source_id}, photometric were not found: {repr(e)}')
         #     jdict_predicted, jdict_fitted = None, None
         # gaia_id = jdict_cross_ident['gaia_id']
-        source_name = handler.main_name(jdict_cross_ident)
+        source_name = skvo_veb.utils.my_tools.main_name(jdict_cross_ident)
         sky_coords = coord.coordequ_to_skycoord(jdict_main["coordequ"])
         coord_hms_dms = coord.skycoord_to_hms_dms(sky_coords, precision=1)
         # coord_dms_dms = coord.skycoord_to_dms_dms(sky_coords, precision=1)
