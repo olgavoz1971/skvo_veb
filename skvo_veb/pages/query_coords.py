@@ -38,7 +38,7 @@ def load_cone(coord_str: str, radius: str, catalogue):
 def layout(coords='0 0', radius='10', catalogue='Gaia'):
     try:
         df, tooltips = load_cone(coords, radius, catalogue)
-        table_coord = table_with_link(df=df, tooltips=tooltips, ident='table', numeric_columns={'Mag G': 2, 'dist': 1})
+        table_coord = table_with_link(df=df, tooltips=tooltips, ident='table_query_coords', numeric_columns={'Mag G': 2, 'dist': 1})
         df[['ra', 'dec']] = df['RA DEC'].str.split(' ', expand=True)
         df['ra'] = Angle(df['ra'].values, unit=hourangle).deg
         df['dec'] = Angle(df['dec'].values, unit=deg).deg
@@ -64,7 +64,7 @@ def layout(coords='0 0', radius='10', catalogue='Gaia'):
                 Markdown(children='*Click on a table row to highlight the object on the map, and vice versa*',
                          style={"font-size": 14, 'font-family': 'courier'}),
                 # style={"white-space": "pre", "font-size": 14, 'font-family': 'courier'})
-                dbc.Label(id='label-debug', children='Nothing')
+                dbc.Label(id='label_aladin_coords', children='')
             ], className="gx-2", lg=5, md=5, sm=12)  # p-0 -- without padding
         ])
         # response = table_coord
@@ -80,8 +80,8 @@ def layout(coords='0 0', radius='10', catalogue='Gaia'):
 
 
 @callback(Output('aladin', 'selectedStar'),
-          Input('table', 'active_cell'),
-          State('table', 'data'),
+          Input('table_query_coords', 'active_cell'),
+          State('table_query_coords', 'data'),
           prevent_initial_call=True)
 def display_row_data(active_cell, data):
     if active_cell:
@@ -100,10 +100,10 @@ def display_row_data(active_cell, data):
     raise PreventUpdate
 
 
-@callback(Output('label-debug', 'children'),
-          Output('table', 'style_data_conditional'),
+@callback(Output('label_aladin_coords', 'children'),
+          Output('table_query_coords', 'style_data_conditional'),
           Input('aladin', 'selectedStar'),
-          State('table', 'data'),
+          State('table_query_coords', 'data'),
           prevent_initial_call=True)
 def highlite_yellow(selected_star, table_data):
     name = selected_star['name']
