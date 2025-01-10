@@ -6,7 +6,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
         plotLightcurveFromStore: function(dataString, figure) {
             console.log('Updating figure from dcc.Store data');
-            console.log('dataString =', dataString);
+            // console.log('dataString =', dataString);
             try {
                 // Parse the JSON string stored in dcc.Store into an object
                 let fullData = JSON.parse(dataString);
@@ -20,7 +20,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                     console.log('empty lightcurve');
                     return window.dash_clientside.no_update;
                 }
-                console.log('lightcurve:', lightcurve);
+                // console.log('lightcurve:', lightcurve);
                 // const folded_view = lightcurve.folded_view; // Extract whether the folded view is active
                 const folded_view = metadata.folded_view; // Extract whether the folded view is active.
 
@@ -29,7 +29,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 // 'columns' is now a _reference_ to lightcurve.columns, and 'rows' is a _reference_ to lightcurve.data.
                 // Any changes to 'rows' or 'columns' will directly modify the 'lightcurve' object
                 const { columns, data: rows } = lightcurve; // Extract columns and rows from the stored lightcurve.
-                console.log('rows =', rows);
+                // console.log('rows =', rows);
 
                 // Based on the folded_view status, determine which column to use for the x-axis.
                 let xColIndex;
@@ -88,7 +88,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                         selectedpoints: selectedPoints  // Highlight selected points.
                     };
                 });
-                console.log('newData =', newData);
+                // console.log('newData =', newData);
 
                 // Copy the figure layout and remove any selections (e.g., lasso or box selection paths)
                 const newLayout = { ...figure.layout,
@@ -99,12 +99,12 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
                 // Return the updated figure with the new data and layout.
                 const newFigure = { ...figure, data: newData, layout: newLayout };
-                console.log('newLayout:', newLayout);
+                // console.log('newLayout:', newLayout);
                 return newFigure;
 
             } catch (error) {
                 // If there's an error, log it and prevent any update to the figure
-                console.error("Error:", error.message);
+                console.error("plotLightcurveFromStore Error:", error.message);
                 return window.dash_clientside.no_update;
             }
         },
@@ -120,7 +120,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 }
                 // Ensure the necessary keys exist
                 if (!fullData.hasOwnProperty('metadata')) {
-                    console.error('Missing metadata in the stored data');
+                    console.error('updateFoldedView Error: Missing metadata in the stored data');
                     return window.dash_clientside.no_update;
                 }
 
@@ -132,12 +132,12 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
                 // Update the metadata with the new folded_view value
                 fullData.metadata.folded_view = folded_view;
-                console.log('Updated metadata:', fullData.metadata);
+                // console.log('Updated metadata:', fullData.metadata);
 
                 // Return the updated dictionary as a JSON string
                 return JSON.stringify(fullData);
             } catch (error) {
-                console.error('Error updating folded view:', error);
+                console.error('updateFoldedView Error:', error);
                 return window.dash_clientside.no_update;
             }
         },
@@ -180,7 +180,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 // dataString has the structure: { lightcurve: {...}, metadata: {...} }
                 let fullData = JSON.parse(dataString);
                 let lightcurve = fullData.lightcurve; // Extracting the lightcurve data
-                console.log("lightcurve =", lightcurve);
+                // console.log("lightcurve =", lightcurve);
 
                 // Extract the columns and rows from the lightcurve (a table structure)
                 // Use destructuring to extract 'columns' and 'data' properties from the 'lightcurve' object.
@@ -197,7 +197,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                     const permIndex = row[permIndexColumn];
                     permIndexMap[permIndex] = index;  // Create a mapping from perm_index to row index
                 });
-                console.log("Map permIndexMap:", permIndexMap);
+                // console.log("Map permIndexMap:", permIndexMap);
 
                 // Get the indices of selected points from the customdata of the triggered event
                 console.log("triggerData =", triggerData);
@@ -212,7 +212,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                         console.log(`Updated the row ${rowIndex}:`, rows[rowIndex]);
                     }
                 });
-                console.log("Renewed lightcurve:", lightcurve);
+                // console.log("Renewed lightcurve:", lightcurve);
 
                 // Update the fullData structure with the modified lightcurve
                 fullData.lightcurve = lightcurve;
@@ -220,7 +220,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 return JSON.stringify(fullData);
 
             } catch (error) {
-                console.error("clientside_callback error:", error.message);
+                console.error("selectData Error:", error.message);
                 return window.dash_clientside.no_update;
             }
         },
@@ -235,12 +235,12 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
                 // Parse the JSON string stored in dcc.Store into an object
                 let fullData = JSON.parse(dataString);
-                console.log("parsed data for unselect =", fullData);
+                // console.log("parsed data for unselect =", fullData);
                 const { columns, data: rows } = fullData.lightcurve;
 
                 const selectedColumnIndex = columns.indexOf('selected');
                 if (selectedColumnIndex === -1) {
-                    console.error("'selected' column does not exist");
+                    console.error("unselectData: 'selected' column does not exist");
                     return window.dash_clientside.no_update;
                 }
 
@@ -248,10 +248,11 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                     row[selectedColumnIndex] = 0;  // mark point as unselected
                 });
 
-                console.log("All points unselected:", fullData.lightcurve);
+                // console.log("All points unselected:", fullData.lightcurve);
+                console.log("All points unselected");
                 return JSON.stringify(fullData);
             } catch (error) {
-                console.error("Error in unselect:", error.message);
+                console.error("unselectData Error:", error.message);
                 return window.dash_clientside.no_update;
             }
         },
@@ -275,10 +276,10 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 // data.data.data = newRows;
                 fullData.lightcurve.data = newRows;
 
-                console.log("Updated data (after deletion):", fullData.lightcurve);
+                // console.log("Updated data (after deletion):", fullData.lightcurve);
                 return JSON.stringify(fullData);
             } catch (error) {
-                console.error("Error in deleting selected points:", error.message);
+                console.error("deleteSelected Error:", error.message);
                 return window.dash_clientside.no_update;
             }
         }

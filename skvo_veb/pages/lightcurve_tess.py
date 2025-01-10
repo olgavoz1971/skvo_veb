@@ -118,8 +118,15 @@ def layout():
                             ], md=6, sm=6),
                             dbc.Col([
                                 dbc.Label('Curve:', html_for='stitch_switch'),
-                                dbc.Checklist(options=[{'label': 'Stitch', 'value': 1}], value=0, id='stitch_switch',
-                                              persistence=True, switch=True),
+                                dbc.Switch(id='stitch_switch', label='Stitch', value=False,
+                                           # label_style=switch_label_style,
+                                           style=switch_label_style,
+                                           persistence=True),
+                                # dbc.Checklist(options=[{'label': 'Stitch', 'value': 1}], value=0, id='stitch_switch',
+                                #               persistence=True, switch=True,
+                                #               # labelStyle={'flexWrap': 'wrap'},
+                                #               labelStyle=switch_label_style,
+                                #               ),
                             ], md=6, sm=6),
                         ]),  # tune
                         dbc.Row([
@@ -207,6 +214,7 @@ def plot_selected_curves(selected_rows, table_data, stitch, flux_method):
     for row in selected_data:
         target = f'TIC {row.get("target", None)}'
         author = row["author"]
+        exptime = row["exptime"]
         match = re.search(r'Sector (\d+)', row.get('mission', ''))
         if match:
             sector = int(match.group(1))
@@ -216,7 +224,8 @@ def plot_selected_curves(selected_rows, table_data, stitch, flux_method):
             'target': target,
             'author': author,
             'mission': 'TESS',
-            'sector': sector
+            'sector': sector,
+            'exptime': exptime
         }
         search_lcf_refined = cache.load(search_cache_key, **args)
         if search_lcf_refined is None:
@@ -230,7 +239,7 @@ def plot_selected_curves(selected_rows, table_data, stitch, flux_method):
             logging.warning(f'download_selected_pixel exception: {e}')
             # Probably, we have the corrupted cache. Let's try clean it
             # Build the filename of cached lightcurve. See lightkurve/search.py
-            # Sorry, but I don't want to change the default cache_dir:
+            # I don't want to change the default cache_dir:
             import os
             # noinspection PyProtectedMember
             download_dir = search_lcf_refined._default_download_dir()

@@ -8,17 +8,15 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 from os import getenv
-from dotenv import load_dotenv
-load_dotenv()  # Note: it is important to load dotenv here,
-# because celery worker runs this file and not main.py or *.wsgi
+# from dotenv import load_dotenv
+
+# load_dotenv()  # Note: it is important to load dotenv here,
+# # because celery worker runs this file and not main.py or *.wsgi
 
 
 server = flask.Flask(__name__)
 
 USE_REDIS = getenv('USE_REDIS', 'false').upper() == 'TRUE' or getenv('USE_REDIS', 'false') == '1'
-
-# USE_REDIS = True
-# USE_REDIS = False
 
 
 @server.route("/")
@@ -31,9 +29,13 @@ if USE_REDIS:
     from celery import Celery
     from dash import CeleryManager
 
+    # celery_app = Celery(__name__,
+    #                     broker='redis://localhost:6379/0',
+    #                     backend='redis://localhost:6379/1',
+    #                     broker_connection_retry_on_startup=True)
     celery_app = Celery(__name__,
-                        broker='redis://localhost:6379/0',
-                        backend='redis://localhost:6379/1',
+                        broker=getenv('REDIS_BROKER'),
+                        backend=getenv('REDIS_BACKEND'),
                         broker_connection_retry_on_startup=True)
     background_callback_manager = CeleryManager(celery_app)
     print(f"Using background manager: {background_callback_manager}")
@@ -44,7 +46,7 @@ else:
 
 
 app = Dash(__name__, server=server, use_pages=True,
-           background_callback_manager=background_callback_manager)  # , suppress_callback_exceptions=True)
+           background_callback_manager=background_callback_manager, suppress_callback_exceptions=True)
 # todo replace it with app.validation_layout
 app.title = 'Gaia VEB lightcurves Dashboard'
 

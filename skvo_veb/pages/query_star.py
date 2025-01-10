@@ -251,10 +251,9 @@ def layout(source_id='AA%20And'):
             #                            'gaia_id': gaia_id, 'catalogue': catalogue}), id='store-query_star')
         ], fluid=True)
     except Exception as e:
-        logging.warning(repr(e))
+        logging.warning(f'query_star.layout exception: {e}')
         content = dbc.Container([
             html.H1('Query result', className="text-primary text-left fs-3"),
-
             # message.warning_alert(repr(e)),
             message.warning_alert(e),
         ], fluid=True)

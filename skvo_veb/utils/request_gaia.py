@@ -74,7 +74,6 @@ def request_coord_cone(coord_str: str, rad_arcmin, catalogue) -> tuple[DataFrame
 
         df['catalogue'] = catalogue  # todo This is a stub Use catalogue into the DB request
         # todo "df.astype" -- trick against truncating long integer in the dash table
-        logging.debug(f'--- request_coord_cone stop len = {len(df)}')
         return df.astype({'gaia_id': 'string'}), tooltip_di
         # todo Can I perform this smarter?
         # https://community.plotly.com/t/dash-datatable-large-number-formatting/53085
@@ -127,10 +126,12 @@ def _request_coord_cone(ra_deg: float, dec_deg: float, rad_arcmin: float):
     if getenv('DEBUG_LOCAL'):
         return _debug_load_test_cone()
 
-    logging.error(f'_request_coord_cone host={getenv("DB_HOST")} '
-                  f'dbname={getenv("DB_NAME")} '
-                  f'user={getenv("DB_USER")} '
-                  f'password= {getenv("DB_PASS")}')
+    # O, no!!!!!
+    # logging.error(f'_request_coord_cone host={getenv("DB_HOST")} '
+    #               f'dbname={getenv("DB_NAME")} '
+    #               f'user={getenv("DB_USER")} '
+    #               f'password= {getenv("DB_PASS")}')
+
     conn = psycopg2.connect(
         host=getenv("DB_HOST"),
         dbname=getenv("DB_NAME"),
@@ -138,7 +139,6 @@ def _request_coord_cone(ra_deg: float, dec_deg: float, rad_arcmin: float):
         password=getenv("DB_PASS")
     )
 
-    logging.error('after conn')
     cursor_di = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)  # returns results as a dictionary
     cursor_di.execute(psql_str1)
     _ = cursor_di.fetchall()

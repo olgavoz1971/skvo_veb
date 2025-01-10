@@ -544,10 +544,7 @@ def parse_table_data(selected_rows, table_data):
 def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
     if n_clicks is None:
         raise PreventUpdate
-    print('print: download_sector')
     logging.debug('debug: download_sector')
-    logging.info('info: download_sector')
-    logging.warning('warning: download_sector')
 
     pixel_metadata = dash.no_update
     wcs_di = dash.no_update
@@ -1112,8 +1109,6 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
     # unpleasant flickering during the initial loading of the lightcurve.
     # Here, I simply close all items except the first one.
     # """
-    print('search')
-    print(n_clicks, pixel_type, obj_name, ra, dec, radius)
     if n_clicks is None:
         raise PreventUpdate
 
@@ -1234,13 +1229,11 @@ def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
     prevent_initial_call=True
 )
 def update_box_select_data(selected_data, di_metadata):
-    print('update_box_select_data')
     if selected_data is None:
         raise PreventUpdate
     if 'range' in selected_data:
         if 'x' in selected_data['range']:
             left_border, right_border = selected_data['range']['x']
-            print(f"Left border: {left_border}, Right border: {right_border}")
             di_metadata['left'] = np.round(left_border, 1)
             di_metadata['right'] = np.round(right_border, 1)
     return di_metadata

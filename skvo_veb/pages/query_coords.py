@@ -24,7 +24,7 @@ register_page(__name__, name='Query by coordinates',
 
 
 def load_cone(coord_str: str, radius: str, catalogue):
-    logging.info('load_cone')
+    logging.debug('load_cone')
     df, tooltips = request_gaia.request_coord_cone(coord_str, radius, catalogue)
     # f-string doesn't work here. But why???
     df['Identifier'] = ('[' + df["Identifier"] + '](/igebc/star?source_id=' + df["gaia_id"] +
