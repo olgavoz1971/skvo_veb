@@ -2,6 +2,19 @@
 This is the main archive of the skvo_veb application (https://skvo.science.upjs.sk/igebc) of Interactive Gaia Eclipsing Binary Catalog (Pavol Jozef Šafárik University in Košice, Faculty of Science)
 
 The web application is written using Dash Plotly. 
+#### Directory Structure
+```bash
+.
+├── .venv
+├── skvo_veb
+│   ├── assets
+│   ├── components
+│   ├── __init__.py
+│   ├── pages
+│   └── utils
+├── .env
+└── skvo_veb.wsgi
+```
 
 Сallbacks that work with remote databases are organized as 'background callbacks'. To manage them we use a Redis server and Celery
 ## Redis and Celery installation
@@ -67,19 +80,6 @@ $ cd path_to_skvo_veb_project/
 
 ### Celery Daemonization
 In production mode, Celery must be run as a service.
-#### Directory Structure
-```bash
-.
-├── .venv
-├── skvo_veb
-│   ├── assets
-│   ├── components
-│   ├── __init__.py
-│   ├── pages
-│   └── utils
-├── .env
-└── skvo_veb.wsgi
-```
 
 1. Create `/etc/systemd/system/celery.service` file
 ```ini
