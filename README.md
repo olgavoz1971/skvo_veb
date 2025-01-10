@@ -1,7 +1,7 @@
 # skvo_veb
 This is the main archive of the skvo_veb application (https://skvo.science.upjs.sk/igebc) of Interactive Gaia Eclipsing Binary Catalog (Pavol Jozef Šafárik University in Košice, Faculty of Science)
 
-The web application is written with Dash Plotly. Сallbacks, working with remote databases, are organised as 'background callbacks'. To arrange them we use Redis server and Celery
+The web application is written with Dash Plotly. Сallbacks, working with remote databases, are organised as 'background callbacks'. To arrange them we use a Redis server and Celery
 ## Redis and Celery installation
 **Disclaimer**: The following instruction relates only to Linux, namely Ubuntu 22.04.4 LTS
 ### How to install Redis-community
@@ -39,9 +39,25 @@ https://dash.plotly.com/background-callbacks
 
 It's better to do this under your application's virtual environment
 ```bash
-$ source path_to_your_venv/.vennv/bin/activate
+$ source path_to_skvo_veb_project/.venv/bin/activate
 (venv) $ pip install dash[celery]
 ```
+#### Run celery in the terminal (debug mode)
+```bash
+$ cd path_to_skvo_veb_project/
+(venv) $ celery -A skvo_veb.celery_app worker --loglevel=DEBUG
+```
+This way celery starts an application by its workers
+Our project uses .env file to store sensitive information. To take access to the environmental variables from this file we export them before celery starts in bash script go_celery.sh
+```bash
+$ cat go_celery.sh 
+#!/bin/bash
+export $(grep -v '^#' .env | xargs)
+celery -A skvo_veb.celery_app worker --loglevel=DEBUG
+$ cd path_to_skvo_veb_project/
+(venv) $ ./go_celery.sh
+```
+
 
 ### Celery demonization
 
