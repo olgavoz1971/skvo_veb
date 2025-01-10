@@ -1,11 +1,14 @@
 # skvo_veb
 This is the main archive of the skvo_veb application (https://skvo.science.upjs.sk/igebc) of Interactive Gaia Eclipsing Binary Catalog (Pavol Jozef Šafárik University in Košice, Faculty of Science)
 
-The web application is written using Dash Plotly. Сallbacks that work with remote databases are organized as 'background callbacks'. To manage them we use a Redis server and Celery
+The web application is written using Dash Plotly. 
+
+Сallbacks that work with remote databases are organized as 'background callbacks'. To manage them we use a Redis server and Celery
 ## Redis and Celery installation
 **Disclaimer**: The following instructions apply only to Linux, specifically Ubuntu 22.04.4 LTS.
 
 ### How to Install Redis (Community Edition)
+For detailed information, visit:
 https://redis.io/docs/latest/operate/oss_and_stack/install/install-redis/install-redis-on-linux/ 
 ```bash
 $ sudo apt-get install lsb-release curl gpg
@@ -38,8 +41,8 @@ $ sudo systemctl enable redis-server
 
 ### How to install Celery
 To manage background callbacks, you need to install Celery in your application's virtual environment.
+
 For more information, visit: https://dash.plotly.com/background-callbacks
-https://dash.plotly.com/background-callbacks
 
 ```bash
 $ source path_to_skvo_veb_project/.venv/bin/activate
@@ -51,7 +54,7 @@ $ cd path_to_skvo_veb_project/
 (venv) $ celery -A skvo_veb.celery_app worker --loglevel=DEBUG
 ```
 This command starts Celery workers for the application.
-Our project uses .env file to store sensitive information. To access the environmental variables from this file we export them before starting Celery in the go_celery.sh bash script:
+Our project uses `.env` file to store sensitive information. To access the environmental variables from this file we export them before starting Celery in the `go_celery.sh` bash script:
 ```bash
 $ cat go_celery.sh 
 #!/bin/bash
@@ -64,8 +67,21 @@ $ cd path_to_skvo_veb_project/
 
 ### Celery Daemonization
 In production mode, Celery must be run as a service.
+#### Directory Structure
+```bash
+.
+├── .venv
+├── skvo_veb
+│   ├── assets
+│   ├── components
+│   ├── __init__.py
+│   ├── pages
+│   └── utils
+├── .env
+└── skvo_veb.wsgi
+```
 
-1. Create /etc/systemd/system/celery.service file
+1. Create `/etc/systemd/system/celery.service` file
 ```ini
 [Unit]
 Description=Celery Worker for skvo_veb
@@ -88,10 +104,10 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 ```
-Here we specify our environmental file using the keyword _EnvironmentFile_
+Here we specify our environmental file using the keyword `EnvironmentFile`
 
 2. Run the service
-In production mode, place the application in the _/var/www/flask_ directory
+In production mode, place the application in the `/var/www/flask` directory
 Start the service from there:
 
 ```bash
