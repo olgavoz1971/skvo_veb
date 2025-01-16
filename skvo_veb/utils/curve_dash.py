@@ -58,6 +58,7 @@ class CurveDash:
 
     def __init__(self, serialized: str | None = None,
                  jd=None, flux=None, flux_err=None,
+                 flux_correction: str | None = None,
                  name: str = '', gaia_id=None,
                  band='',
                  time_unit: str = '', flux_unit: str = '',
@@ -104,6 +105,7 @@ class CurveDash:
             self.lightcurve = df
             self.metadata: dict = {'name': name, 'gaia_id': gaia_id, 'band': band, 'cross_ident': cross_ident,
                                    'time_unit': time_unit, 'timescale': timescale,
+                                   'flux_correction': flux_correction,
                                    'flux_unit': flux_unit, 'period': period, 'period_unit': period_unit,
                                    'epoch': epoch,
                                    'folded_view': 1}
@@ -129,6 +131,14 @@ class CurveDash:
     def folded_view(self, value):
         if self.metadata is not None:
             self.metadata['folded_view'] = value
+
+    @property
+    def flux_correction(self):
+        if self.metadata is not None:
+            if self.metadata.get('flux_correction') is not None:
+                return self.metadata.get('flux_correction')
+        else:
+            return ''
 
     @staticmethod
     def calc_phase(time_arr, epoch_jd: float | None, period: float | None, period_unit='d'):
@@ -190,6 +200,24 @@ class CurveDash:
     @property
     def band(self):
         return self.metadata.get('band')
+
+    def cut(self, left_border, right_border):
+        """
+        Remove a piece of lightcurve between  left_border and right_border along the time axis
+        :param left_border: start_time
+        :param right_border: end_time
+        """
+        df = self.lightcurve
+        self.lightcurve = df[(df['jd'] < left_border) | (df['jd'] > right_border)]
+
+    def keep(self, left_border, right_border):
+        """
+        Keep only a piece of lightcurve (remove the rest) between left_border and right_border along the time axis
+        :param left_border: start_time
+        :param right_border: end_time
+        """
+        df = self.lightcurve
+        self.lightcurve = df[(df['jd'] >= left_border) & (df['jd'] <= right_border)]
 
     def download(self, table_format='ascii.ecsv') -> bytes:
         """

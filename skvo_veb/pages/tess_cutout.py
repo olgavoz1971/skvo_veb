@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.wcs import WCS
-from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback, set_props
+from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback, ctx, set_props
 from dash.dash_table import DataTable
 from dash.exceptions import PreventUpdate
 from lightkurve import search_targetpixelfile, search_tesscut, LightkurveError
@@ -337,34 +337,36 @@ def layout():
                                 labelStyle=switch_label_style,
                                 style={'font-size': label_font_size},
                             ),
-                            dcc.RadioItems(
-                                id='ordinate_switch',
-                                options=[
-                                    {'label': 'flux', 'value': 'flux'},
-                                    {'label': 'cent x', 'value': 'x'},
-                                    {'label': 'cent y', 'value': 'y'},
-                                ],
-                                value='flux',
-                                labelStyle=switch_label_style,
-                                style={'font-size': label_font_size},
-                            ),
+                            # dcc.RadioItems(
+                            #     id='ordinate_switch',
+                            #     options=[
+                            #         {'label': 'flux', 'value': 'flux'},
+                            #         {'label': 'cent x', 'value': 'x'},
+                            #         {'label': 'cent y', 'value': 'y'},
+                            #     ],
+                            #     value='flux',
+                            #     labelStyle=switch_label_style,
+                            #     style={'font-size': label_font_size},
+                            # ),
                         ], style={'marginBottom': '5px'}),  # curve tune
                         dbc.Row([
                             dbc.Stack([
-                                # dbc.Col(
                                 dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm"),
-                                #                   style={'width': '100%'}),
-                                #         width='auto'),
-                                # dbc.Col(
                                 dbc.Button('Compare', id='plot_difference_button', size="sm"),
-                                # style={'width': '100%'}),
-                                # width='auto'),
                             ], direction='horizontal', gap=2, style=stack_wrap_style),
                         ], justify='between',
                             className='gy-1',
                             style={'marginBottom': '5px'}),  # plot buttons
+                        dbc.Row([dbc.Label('Selection:', style={'font-size': label_font_size})]),
                         dbc.Row([
-                            # dbc.Col([
+                            dbc.Stack([
+                                dbc.Button('Cut', id='cut_tess_button', size="sm"),
+                                dbc.Button('Keep', id='keep_tess_button', size="sm")
+                            ], direction='horizontal', gap=2, style=stack_wrap_style),
+                        ], justify='between',
+                            className='gy-1',
+                            style={'marginBottom': '5px'}),  # selection actions
+                        dbc.Row([
                             dbc.Stack([
                                 dbc.Select(options=CurveDash.get_format_list(),
                                            # handler.get_format_list(),
@@ -372,12 +374,7 @@ def layout():
                                            # value=handler.get_format_list()[0],
                                            id='select_tess_format',
                                            style={'max-width': '7em', 'font-size': label_font_size}),
-                                # ], width='auto'),
-                                # dbc.Col([
                                 dbc.Button('Download', id='btn_download_tess_lc', size="sm"),
-                                # style={'width': '100%'}),
-                                # ], direction='horizontal', gap=2)
-                                # ], width='auto'),  # select a format
                             ], direction='horizontal', gap=2, style=stack_wrap_style),
                         ], justify='between',
                             className='gy-1',  # class adds vertical gaps between folded columns
@@ -430,12 +427,13 @@ def layout():
         dcc.Store(id='store_search_result'),  # things showed in the data table
         dcc.Store(id='store_pixel_metadata'),  # stuff for recreation current pixel
         dcc.Store(id='mask_store'),
-        dcc.Store(id='mask_slow_store'),
-        dcc.Store(id='mask_fast_store'),
-        dcc.Store(id='wcs_store'),
-        dcc.Store(id='store_tess_lightcurve'),
-        dcc.Store(id='store_tess_metadata'),
+        dcc.Store(id='mask_slow_store'),  # for more complex mask operation, performed on the server side
+        dcc.Store(id='mask_fast_store'),  # mask changed on client side
+        dcc.Store(id='wcs_store'),  # store wcs to syn with Aladin applet
+        dcc.Store(id='store_tess_lightcurve'),  # lightcurve data is here
+        dcc.Store(id='store_tess_metadata'),  # metadata related to the lightcurve, e.g., Name, Sector, etc
         dcc.Store(id='lc2_store'),
+        dcc.Store(id='lc3_store'),
         # dcc.Store(id="active_item_store", storage_type="memory"),  # Allows tracking recently opened accordion item
         dcc.Download(id='download_tess_lc'),
     ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
@@ -485,7 +483,7 @@ def get_tpf(target, radius=10):
     """
     tpf = cache.load('tpf', target=target, radius=radius)
     if tpf is None:
-        tpf = search_targetpixelfile(target=target, mission='TESS', radius=radius)
+        tpf = search_targetpixelfile(taroget=target, mission='TESS', radius=radius)
         cache.save(tpf, 'tpf', target=target, radius=radius)
     repr(tpf)  # Do not touch this line :-)
     return tpf
@@ -521,7 +519,6 @@ def parse_table_data(selected_rows, table_data):
     return selected_data[0]
 
 
-# lll
 @callback(
     [Output('store_pixel_metadata', 'data'),
      Output('wcs_store', 'data', allow_duplicate=True),
@@ -585,8 +582,8 @@ def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
     prevent_initial_call=True
 )
 def plot_pixel(n_clicks, pixel_metadata, gamma, threshold, sum_it, mask_type, auto_mask):
-    ctx = dash.callback_context
-    if ctx.triggered and ctx.triggered[0]["prop_id"] == "replot_pixel_button.n_clicks":
+    # if ctx.triggered and ctx.triggered[0]["prop_id"] == "replot_pixel_button.n_clicks":
+    if ctx.triggered_id == "replot_pixel_button":
         if n_clicks is None:
             raise PreventUpdate
     pixel_data = lightkurve.targetpixelfile.TessTargetPixelFile(pixel_metadata['path'])
@@ -849,13 +846,28 @@ clientside_callback(
 )
 
 
+def create_lightcurve_figure(x, y, title='', xaxis_title='', yaxis_title=''):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=y,
+                             hoverinfo='none',  # Important
+                             hovertemplate=None,
+                             mode='markers+lines',
+                             marker=dict(color='blue', size=6, symbol='circle'),
+                             line=dict(color='blue', width=1)))
+    fig.update_layout(title=title,
+                      showlegend=False,
+                      margin=dict(l=0, b=20, t=30, r=20),
+                      xaxis_title=xaxis_title,
+                      yaxis_title=yaxis_title,
+                      )
+    return fig
+
+
 @callback(
     output=dict(
-        fig1=Output('curve_graph_1', 'figure'),
-        fig2=Output('curve_graph_2', 'figure'),
-        fig3=Output('curve_graph_3', 'figure'),
-        lc1=Output('store_tess_lightcurve', 'data'),
+        lc1=Output('store_tess_lightcurve', 'data'),  # todo make it an Input also
         lc2=Output('lc2_store', 'data'),
+        lc3=Output('lc3_store', 'data'),
         meta=Output('store_tess_metadata', 'data'),
     ),
     inputs=dict(n_clicks=Input('plot_curve_tess_button', 'n_clicks')),
@@ -865,15 +877,14 @@ clientside_callback(
         star_number=State('star_tess_switch', 'value'),
         sub_bkg=State('sub_bkg_switch', 'value'),
         flatten=State('flatten_switch', 'value'),
-        ordinate=State('ordinate_switch', 'value')
     ),
     prevent_initial_call=True
 )
-def plot_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, flatten, ordinate):
+def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, flatten):
     if n_clicks is None:
         raise PreventUpdate
 
-    output_keys = ['fig1', 'fig2', 'fig3', 'lc1', 'lc2', 'meta']
+    output_keys = ['lc1', 'lc2', 'lc3', 'meta']
     output = {key: dash.no_update for key in output_keys}
 
     try:
@@ -894,68 +905,137 @@ def plot_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, f
         quality_mask = lc['quality'] == 0  # mask by TESS quality
         lc = lc[quality_mask]
         jd = lc.time.value
-        flux_unit = None
-        flux_err = None
-        if ordinate == 'flux':
-            flux_unit = str(lc.flux.unit)
-            flux_err = lc.flux_err  # todo: take into account background errors?
-            if sub_bkg:
-                yaxis_title = f'flux - bkg, {flux_unit}'
-                bkg = pixel_data.estimate_background(aperture_mask='background')
-                # noinspection PyUnresolvedReferences
-                flux = lc.flux - bkg.flux[quality_mask] * mask.sum() * u.pix  # todo check this !
-            else:
-                yaxis_title = f'flux, {flux_unit}'
-                flux = lc.flux
-            if flatten:
-                pld = PLDCorrector(pixel_data)
-                corrected_lc = pld.correct(pld_aperture_mask=mask)
-                yaxis_title = f'PLD corrected, {flux_unit}'
-                # l, trend = lc.flatten(return_trend=True)
-                # flux = lc.flux - trend.flux
-                # flux = trend.flux
-                flux = corrected_lc.flux
-                jd = corrected_lc.time.value
-        elif ordinate == 'x':
-            yaxis_title = 'centroid_col, px'
-            flux = lc.centroid_col  # todo rename it somehow
+        flux_unit = str(lc.flux.unit)
+        flux_err = lc.flux_err  # todo: take into account background errors?
+        flux_correction = None
+        if sub_bkg:
+            flux_correction = 'background subtracted'
+            bkg = pixel_data.estimate_background(aperture_mask='background')
+            # noinspection PyUnresolvedReferences
+            flux = lc.flux - bkg.flux[quality_mask] * mask.sum() * u.pix  # todo check this !
         else:
-            yaxis_title = 'centroid_row, px'
-            flux = lc.centroid_row  # todo rename it somehow
+            flux = lc.flux
+        if flatten:
+            pld = PLDCorrector(pixel_data)
+            corrected_lc = pld.correct(pld_aperture_mask=mask)
+            flux_correction = 'PLD corrected'
+            # l, trend = lc.flatten(return_trend=True)
+            # flux = lc.flux - trend.flux
+            # flux = trend.flux
+            flux = corrected_lc.flux
+            jd = corrected_lc.time.value
+
         time_unit = lc.time.format
 
         name = lc.LABEL if lc.LABEL else pixel_metadata.get('target', '')
-        curve_dash = CurveDash(jd=jd, flux=flux, flux_err=flux_err, name=name, time_unit=time_unit, flux_unit=flux_unit)
+        lcd = CurveDash(jd=jd, flux=flux, flux_err=flux_err, name=name,
+                        time_unit=time_unit, flux_unit=flux_unit,
+                        flux_correction=flux_correction)
+        jsons = lcd.serialize()
 
-        # df = pd.DataFrame({'jd': jd, 'flux': flux})
-        jsons = curve_dash.serialize()
-        # jsons = json.dumps(df.to_dict())
-
-        lc_metadata = {'target': name, 'img': pixel_metadata.get('pixel_type', '').upper(), 'sector': lc.sector}
+        lc_metadata = {'target': name,
+                       'img': pixel_metadata.get('pixel_type', '').upper(),
+                       'sector': lc.sector,
+                       'label': lc.LABEL,
+                       'author': pixel_metadata.get("author", "")}
         output['meta'] = lc_metadata
-        title = (f'{pixel_metadata.get("pixel_type", "").upper()} '
-                 f'{pixel_metadata.get("target", "")} {lc.LABEL} sector:{lc.SECTOR} {pixel_metadata.get("author", "")}')
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=jd, y=flux,
-                                 hoverinfo='none',  # Important
-                                 hovertemplate=None,
-                                 mode='markers+lines',
-                                 marker=dict(color='blue', size=6, symbol='circle'),
-                                 line=dict(color='blue', width=1)))
-        fig.update_layout(title=title,
-                          showlegend=False,
-                          margin=dict(l=0, b=20, t=30, r=20),
-                          xaxis_title=f'time, {time_unit}',
-                          yaxis_title=yaxis_title,
-                          )
+        # title = (f'{pixel_metadata.get("pixel_type", "").upper()} '
+        #          f'{pixel_metadata.get("target", "")} {lc.LABEL} sector:{lc.SECTOR} {pixel_metadata.get("author", "")}')
+        #
+        # fig = create_lightcurve_figure(jd, flux, title=title, xaxis_title=xaxis_title, yaxis_title=yaxis_title)
+
+        # fig = go.Figure()
+        # fig.add_trace(go.Scatter(x=jd, y=flux,
+        #                          hoverinfo='none',  # Important
+        #                          hovertemplate=None,
+        #                          mode='markers+lines',
+        #                          marker=dict(color='blue', size=6, symbol='circle'),
+        #                          line=dict(color='blue', width=1)))
+        # fig.update_layout(title=title,
+        #                   showlegend=False,
+        #                   margin=dict(l=0, b=20, t=30, r=20),
+        #                   xaxis_title=f'time, {time_unit}',
+        #                   yaxis_title=yaxis_title,
+        #                   )
 
         if star_number == '1':
-            output['fig1'] = fig
             output['lc1'] = jsons
-            active_item = ['accordion_item_1']
         elif star_number == '2':
-            output['fig2'] = fig
             output['lc2'] = jsons
+        else:
+            output['lc3'] = jsons
+        set_props('div_tess_lc_alert', {'children': '', 'style': {'display': 'none'}})
+
+    except Exception as e:
+        logging.warning(f'tess_cutout.plot_lightcurve: {e}')
+        alert_message = message.warning_alert(e)
+        set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
+    return output
+
+
+@callback(
+    output=dict(
+        fig1=Output('curve_graph_1', 'figure'),
+        fig2=Output('curve_graph_2', 'figure'),
+        fig3=Output('curve_graph_3', 'figure'),
+    ),
+    inputs=dict(
+        lc1=Input('store_tess_lightcurve', 'data'),
+        lc2=Input('lc2_store', 'data'),
+        lc3=Input('lc3_store', 'data'),
+    ),
+    state=dict(
+        lc_metadata=State('store_tess_metadata', 'data'),
+    ),
+    prevent_initial_call=True
+)
+def plot_lightcurve(lc1, lc2, lc3, lc_metadata):
+    if ctx.triggered_id == 'store_tess_lightcurve':
+        curve_number = 1
+        js_lightcurve = lc1
+    elif ctx.triggered_id == 'lc2_store':
+        curve_number = 2
+        js_lightcurve = lc2
+    elif ctx.triggered_id == 'lc3_store':
+        curve_number = 3
+        js_lightcurve = lc3
+    else:
+        raise PreventUpdate
+
+    output_keys = ['fig1', 'fig2', 'fig3']
+    output = {key: dash.no_update for key in output_keys}
+
+    try:
+        lcd = CurveDash(js_lightcurve)
+        xaxis_title = f'time, {lcd.time_unit}'
+        yaxis_title = f'flux {lcd.flux_correction}, {lcd.flux_unit}'
+
+        title = (f'{lc_metadata.get("pixel_type", "").upper()} '
+                 f'{lc_metadata.get("target", "")} {lc_metadata.get("label", "")} '
+                 f'sector:{lc_metadata.get("sector", "")} '
+                 f'{lc_metadata.get("author", "")}')
+
+        fig = create_lightcurve_figure(lcd.jd, lcd.flux, title=title, xaxis_title=xaxis_title, yaxis_title=yaxis_title)
+
+        # fig = go.Figure()
+        # fig.add_trace(go.Scatter(x=jd, y=flux,
+        #                          hoverinfo='none',  # Important
+        #                          hovertemplate=None,
+        #                          mode='markers+lines',
+        #                          marker=dict(color='blue', size=6, symbol='circle'),
+        #                          line=dict(color='blue', width=1)))
+        # fig.update_layout(title=title,
+        #                   showlegend=False,
+        #                   margin=dict(l=0, b=20, t=30, r=20),
+        #                   xaxis_title=f'time, {time_unit}',
+        #                   yaxis_title=yaxis_title,
+        #                   )
+
+        if curve_number == 1:
+            output['fig1'] = fig
+            active_item = ['accordion_item_1']
+        elif curve_number == 2:
+            output['fig2'] = fig
             active_item = ['accordion_item_2']
         else:
             output['fig3'] = fig
@@ -969,6 +1049,136 @@ def plot_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, f
         set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
 
     return output
+
+
+# @callback(
+#     output=dict(
+#         fig1=Output('curve_graph_1', 'figure'),
+#         fig2=Output('curve_graph_2', 'figure'),
+#         fig3=Output('curve_graph_3', 'figure'),
+#         lc1=Output('store_tess_lightcurve', 'data'),  # todo make it an Input also
+#         lc2=Output('lc2_store', 'data'),
+#         meta=Output('store_tess_metadata', 'data'),
+#     ),
+#     inputs=dict(n_clicks=Input('plot_curve_tess_button', 'n_clicks')),
+#     state=dict(
+#         pixel_metadata=State('store_pixel_metadata', 'data'),
+#         mask_list=State('mask_store', 'data'),
+#         star_number=State('star_tess_switch', 'value'),
+#         sub_bkg=State('sub_bkg_switch', 'value'),
+#         flatten=State('flatten_switch', 'value'),
+#         ordinate=State('ordinate_switch', 'value')
+#     ),
+#     prevent_initial_call=True
+# )
+# def plot_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg, flatten, ordinate):
+#     # TODO: Consider removing lc2 and lc3.
+#     #  Consolidate all lightcurve plotting into a single method, triggered by store_tess_lightcurve;
+#     #  or remove lc3 only and isolate the curve creation from plotting
+#
+#     if n_clicks is None:
+#         raise PreventUpdate
+#
+#     output_keys = ['fig1', 'fig2', 'fig3', 'lc1', 'lc2', 'meta']
+#     output = {key: dash.no_update for key in output_keys}
+#
+#     try:
+#         path_to_pixel_data = pixel_metadata['path']
+#         pixel_data = lightkurve.targetpixelfile.TessTargetPixelFile(path_to_pixel_data)
+#
+#         if mask_list is None:
+#             logging.warning('No aperture mask provided')
+#             raise PipeException('No aperture mask provided')
+#         mask = np.array(mask_list)
+#         if mask.sum() < 1:
+#             logging.warning('No valid aperture mask provided')
+#             raise PipeException('No valid aperture mask provided')
+#
+#         # noinspection PyTypeChecker
+#         lc = pixel_data.to_lightcurve(aperture_mask=mask)
+#
+#         quality_mask = lc['quality'] == 0  # mask by TESS quality
+#         lc = lc[quality_mask]
+#         jd = lc.time.value
+#         flux_unit = None
+#         flux_err = None
+#         if ordinate == 'flux':
+#             flux_unit = str(lc.flux.unit)
+#             flux_err = lc.flux_err  # todo: take into account background errors?
+#             if sub_bkg:
+#                 yaxis_title = f'flux - bkg, {flux_unit}'
+#                 bkg = pixel_data.estimate_background(aperture_mask='background')
+#                 # noinspection PyUnresolvedReferences
+#                 flux = lc.flux - bkg.flux[quality_mask] * mask.sum() * u.pix  # todo check this !
+#             else:
+#                 yaxis_title = f'flux, {flux_unit}'
+#                 flux = lc.flux
+#             if flatten:
+#                 pld = PLDCorrector(pixel_data)
+#                 corrected_lc = pld.correct(pld_aperture_mask=mask)
+#                 yaxis_title = f'PLD corrected, {flux_unit}'
+#                 # l, trend = lc.flatten(return_trend=True)
+#                 # flux = lc.flux - trend.flux
+#                 # flux = trend.flux
+#                 flux = corrected_lc.flux
+#                 jd = corrected_lc.time.value
+#         elif ordinate == 'x':
+#             yaxis_title = 'centroid_col, px'
+#             flux = lc.centroid_col  # todo rename it somehow
+#         else:
+#             yaxis_title = 'centroid_row, px'
+#             flux = lc.centroid_row  # todo rename it somehow
+#         time_unit = lc.time.format
+#         xaxis_title = f'time, {time_unit}'
+#
+#         name = lc.LABEL if lc.LABEL else pixel_metadata.get('target', '')
+#         lcd = CurveDash(jd=jd, flux=flux, flux_err=flux_err, name=name, time_unit=time_unit, flux_unit=flux_unit)
+#
+#         # df = pd.DataFrame({'jd': jd, 'flux': flux})
+#         jsons = lcd.serialize()
+#         # jsons = json.dumps(df.to_dict())
+#
+#         lc_metadata = {'target': name, 'img': pixel_metadata.get('pixel_type', '').upper(), 'sector': lc.sector}
+#         output['meta'] = lc_metadata
+#         title = (f'{pixel_metadata.get("pixel_type", "").upper()} '
+#                  f'{pixel_metadata.get("target", "")} {lc.LABEL} sector:{lc.SECTOR} {pixel_metadata.get("author", "")}')
+#
+#         fig = create_lightcurve_figure(jd, flux, title=title, xaxis_title=xaxis_title, yaxis_title=yaxis_title)
+#
+#         # fig = go.Figure()
+#         # fig.add_trace(go.Scatter(x=jd, y=flux,
+#         #                          hoverinfo='none',  # Important
+#         #                          hovertemplate=None,
+#         #                          mode='markers+lines',
+#         #                          marker=dict(color='blue', size=6, symbol='circle'),
+#         #                          line=dict(color='blue', width=1)))
+#         # fig.update_layout(title=title,
+#         #                   showlegend=False,
+#         #                   margin=dict(l=0, b=20, t=30, r=20),
+#         #                   xaxis_title=f'time, {time_unit}',
+#         #                   yaxis_title=yaxis_title,
+#         #                   )
+#
+#         if star_number == '1':
+#             output['fig1'] = fig
+#             output['lc1'] = jsons
+#             active_item = ['accordion_item_1']
+#         elif star_number == '2':
+#             output['fig2'] = fig
+#             output['lc2'] = jsons
+#             active_item = ['accordion_item_2']
+#         else:
+#             output['fig3'] = fig
+#             active_item = ['accordion_item_3']
+#         set_props('div_tess_lc_alert', {'children': '', 'style': {'display': 'none'}})
+#         set_props('accordion_tess_lc', {'active_item': active_item})
+#
+#     except Exception as e:
+#         logging.warning(f'tess_cutout.plot_lightcurve: {e}')
+#         alert_message = message.warning_alert(e)
+#         set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
+#
+#     return output
 
 
 @callback(
@@ -1187,53 +1397,39 @@ def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
     return ret
 
 
-# todo: Add cut out lightcurve button
-# def download_tess_lc(_, js_lightcurve, di_metadata, table_format):
-#     # todo rewrite it
-#     # todo add errors
-#     if js_lightcurve is None:
-#         raise PreventUpdate
-#     # bstring is "bytes"
-#     import io
-#     df = pd.DataFrame.from_dict(json.loads(js_lightcurve))
-#     if 'left' in di_metadata and 'right' in di_metadata:
-#         df = df[(df['jd'] >= di_metadata['left']) & (df['jd'] <= di_metadata['right'])]
-#     tab = Table.from_pandas(df)
-#     if table_format in kurve._format_dict_text:
-#         my_weird_io = io.StringIO()
-#     elif table_format in kurve._format_dict_bytes:
-#         my_weird_io = io.BytesIO()
-#     else:
-#         raise PipeException(f'Unsupported format {table_format}\n Valid formats: {str(kurve.format_dict.keys())}')
-#     tab.write(my_weird_io, format=table_format, overwrite=True)
-#     my_weird_string = my_weird_io.getvalue()
-#     if isinstance(my_weird_string, str):
-#         # instead, we could choose  dcc.send_string() or dcc.send_bytes() for text or byte string in Dash application
-#         # I prefer to place all io-logic in one place, here, and convert all stuff into bytes
-#         my_weird_string = bytes(my_weird_string, 'utf-8')
-#     my_weird_io.close()  # todo Needed?
-#
-#     outfile_base = f'lc_tess_' + "_".join(f"{key}_{value}" for key, value in di_metadata.items()).replace(" ", "_")
-#     ext = kurve.get_file_extension(table_format)
-#     outfile = f'{outfile_base}.{ext}'
-#
-#     ret = dcc.send_bytes(my_weird_string, outfile)
-#     return ret
-
-
-@callback(
-    Output('store_tess_metadata', 'data', allow_duplicate=True),
-    # Output('curve_graph_1', 'selectedData'),
-    Input('curve_graph_1', 'selectedData'),
-    State('store_tess_metadata', 'data'),
-    prevent_initial_call=True
-)
-def update_box_select_data(selected_data, di_metadata):
-    if selected_data is None:
+@callback(Output('store_tess_lightcurve', 'data', allow_duplicate=True),
+          [Input('cut_tess_button', 'n_clicks'),
+          Input('keep_tess_button', 'n_clicks'),
+          State('curve_graph_1', 'selectedData'),
+          State('store_tess_lightcurve', 'data')],
+          prevent_initial_call=True,
+          )
+def handle_selection(_1, _2, selected_data, js_lightcurve):
+    """
+    Remove a selected piece of lightcurve
+    Can be applied only to lightcurve 1
+    """
+    if _1 is None and _2 is None:
         raise PreventUpdate
-    if 'range' in selected_data:
-        if 'x' in selected_data['range']:
-            left_border, right_border = selected_data['range']['x']
-            di_metadata['left'] = np.round(left_border, 1)
-            di_metadata['right'] = np.round(right_border, 1)
-    return di_metadata
+    if selected_data is None or js_lightcurve is None:
+        raise PreventUpdate
+    if 'range' not in selected_data:
+        raise PreventUpdate
+    if 'x' not in selected_data['range']:
+        raise PreventUpdate
+    left_border, right_border = selected_data['range']['x']
+    try:
+        lcd = CurveDash(js_lightcurve)
+        if ctx.triggered_id == 'cut_tess_button':
+            lcd.cut(left_border, right_border)
+        else:
+            lcd.keep(left_border, right_border)
+        set_props('div_tess_lc_alert', {'children': '', 'style': {'display': 'none'}})
+        # fig = create_lightcurve_figure(x=lcd.jd, y=lcd.flux)
+        return lcd.serialize()
+    except Exception as e:
+        logging.warning(f'tess_cutout.download_tess_lc: {e}')
+        alert_message = message.warning_alert(e)
+        set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
+        return dash.no_update   # If I raise PreventUpdate here, set_props will not really set props; I
+
