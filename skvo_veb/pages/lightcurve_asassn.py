@@ -182,7 +182,7 @@ def load_new_source(_1, _2, _3, source_id, band, phase_view):
             force_update = True
         else:
             force_update = False
-        lcd = _load_lightcurve(source_id, band='g', force_update=force_update)
+        lcd = _load_lightcurve(source_id, band=band, force_update=force_update)
         lcd.folded_view = folded_view
 
         # jdict = handler.load_lightcurve(source_id, band, catalogue, force_update)
