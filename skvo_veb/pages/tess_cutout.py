@@ -483,7 +483,7 @@ def get_tpf(target, radius=10):
     """
     tpf = cache.load('tpf', target=target, radius=radius)
     if tpf is None:
-        tpf = search_targetpixelfile(taroget=target, mission='TESS', radius=radius)
+        tpf = search_targetpixelfile(target=target, mission='TESS', radius=radius)
         cache.save(tpf, 'tpf', target=target, radius=radius)
     repr(tpf)  # Do not touch this line :-)
     return tpf
