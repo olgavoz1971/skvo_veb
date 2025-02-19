@@ -1,0 +1,3 @@
+You need to reload Apache2 and restart the Celery service each time you change the application:
+1) sudo systemctl reload apache2
+2) sudo systemctl restart celery
