@@ -382,12 +382,6 @@ def _debug_load_lightcurve_with_metadata(gaia_id, band) -> CurveDash:
             epoch_gaia = None
         epoch_new = epoch_gaia - 0.1
 
-        # def __init__(self, serialized: str | None = None,
-        #              jd=None, flux=None, flux_err=None,
-        #              name: str = '', time_unit: str = '', flux_unit: str = '',
-        #              timescale: str | None = None,
-        #              period: float | None = None, period_unit: str = '',
-        #              epoch: float | None = None):
         cross_ident = _debug_load_cross_ident(gaia_id)
         lcd = CurveDash(gaia_id=gaia_id,
                         jd=lc_arr[:, 0] + jd0_gaia, flux=lc_arr[:, 1], flux_err=lc_arr[:, 2],

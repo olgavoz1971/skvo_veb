@@ -81,9 +81,11 @@ def layout(source_id=None, band='G'):
         dbc.Row(id='row-gaia-content', children=[
             dbc.Row([
                 dbc.Col([
-                    dbc.Checklist(options=[{'label': 'Folded view', 'value': 1}], value=0, id='switch-gaia-view',
-                                  persistence=True, switch=True),
-                ]),  # switch phase view
+                    dbc.Switch(id='switch_gaia_view', label='Folded view', value=True,
+                               persistence=True)]
+                    # dbc.Checklist(options=[{'label': 'Folded view', 'value': 1}], value=0, id='switch_gaia_view',
+                    #               persistence=True, switch=True),
+                ),  # switch phase view
             ], class_name="g-2"),  # Switch view/epoch
             dbc.Row([
                 dbc.Col([
@@ -147,11 +149,11 @@ def _load_lightcurve(source_id: str, band: str) -> CurveDash:
     state=dict(
         source_id=State('input-gaia-source-id', 'value'),
         band=State('select-gaia-band', 'value'),
-        phase_view=State('switch-gaia-view', 'value'),
+        phase_view=State('switch_gaia_view', 'value'),
     )
 )
 def load_new_source(_1, _2, source_id, band, phase_view):
-    folded_view = 1 if phase_view else 0
+    # folded_view = 1 if phase_view else 0
 
     if source_id is None or source_id == '':
         raise PreventUpdate
@@ -163,7 +165,7 @@ def load_new_source(_1, _2, source_id, band, phase_view):
     try:
         logging.info(f'Load source data from gaia db: {source_id=}')
         lcd = _load_lightcurve(source_id, band)
-        lcd.folded_view = folded_view
+        lcd.folded_view = phase_view    # True or False
         # epoch = jdict['metadata']['epoch_gaia']
         epoch = lcd.epoch
         # period = jdict['metadata']['period']
@@ -207,7 +209,7 @@ clientside_callback(
         function_name='updateFoldedView'
     ),
     Output('store_gaia_lightcurve', 'data', allow_duplicate=True),
-    Input('switch-gaia-view', 'value'),
+    Input('switch_gaia_view', 'value'),
     State('store_gaia_lightcurve', 'data'),
     prevent_initial_call=True
 )

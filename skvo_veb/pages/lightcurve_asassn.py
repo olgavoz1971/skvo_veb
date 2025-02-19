@@ -76,7 +76,8 @@ def layout(source_id=None, band='g'):
                     # dbc.Button('Clear', size="md", class_name='me-3', color='light', id='btn-asassn-clear-source_id'),
                     dbc.Button('Clear', size="md", color='light', id='btn-asassn-clear-source_id'),
                     dbc.Button('Force', size="md", color='warning', outline=True, id='btn-asassn-update'),
-                    dbc.Tooltip('Forced updates may take some time', target='btn-asassn-update', placement='bottom')
+                    dbc.Tooltip('Forced updates may take some time', target='btn-asassn-update', placement='bottom'),
+                    dbc.Button('Cancel', size="md", disabled=True, id='btn-cancel-asassn-update'),
                 ], direction="horizontal", gap=2),
             ], md=2, align='end'),
 
@@ -87,8 +88,10 @@ def layout(source_id=None, band='g'):
         dbc.Row(id='row-asassn-content', children=[
             dbc.Row([
                 html.Div([
-                    dbc.Checklist(options=[{'label': 'Folded view', 'value': 1}], value=0, id='switch-asassn-view',
-                                  persistence=True, switch=True),
+                    dbc.Switch(id='switch-asassn-view', label='Folded view', value=True,
+                               persistence=True),
+                    # dbc.Checklist(options=[{'label': 'Folded view', 'value': 1}], value=0, id='switch-asassn-view',
+                    #               persistence=True, switch=True),
                     dbc.Label('Unable to fold; the period is unknown', id='label-switch-asassn-view-warning'),
                 ], style={'min-height': '30px'}),
 
@@ -138,7 +141,7 @@ def layout(source_id=None, band='g'):
 #     jdict['folded_view'] = folded_view
 
 
-def _load_lightcurve(source_id: str, band: str,  force_update=False) -> CurveDash:
+def _load_lightcurve(source_id: str, band: str, force_update=False) -> CurveDash:
     gaia_id = decipher_source_id(source_id)  # M.b. long remote call. Or m.b. not
     lcd = load_asassn_lightcurve(gaia_id, band, force_update)
     return lcd
@@ -163,10 +166,16 @@ def _load_lightcurve(source_id: str, band: str,  force_update=False) -> CurveDas
         source_id=State('input-asassn-source-id', 'value'),
         band=State('select-asassn-band', 'value'),
         phase_view=State('switch-asassn-view', 'value'),
-    )
+    ),
+    running=[(Output('btn-asassn-update', 'disabled'), True, False),
+             (Output('btn-cancel-asassn-update', 'disabled'), False, True),
+             (Output('btn-asassn-new-source', 'disabled'), True, False)],
+    cancel=[Input('btn-cancel-asassn-update', 'n_clicks')],
+    background=True,
+    prevent_initial_call=True
 )
 def load_new_source(_1, _2, _3, source_id, band, phase_view):
-    folded_view = 1 if phase_view else 0
+    # folded_view = 1 if phase_view else 0
     switch_asassn_style = {'display': 'block'}
     warning_asassn_style = {'display': 'none'}
 
@@ -183,7 +192,7 @@ def load_new_source(_1, _2, _3, source_id, band, phase_view):
         else:
             force_update = False
         lcd = _load_lightcurve(source_id, band=band, force_update=force_update)
-        lcd.folded_view = folded_view
+        lcd.folded_view = phase_view
 
         # jdict = handler.load_lightcurve(source_id, band, catalogue, force_update)
         period = lcd.period
@@ -216,10 +225,6 @@ def load_new_source(_1, _2, _3, source_id, band, phase_view):
                   warning_asassn_style=warning_asassn_style,
                   lc=lc)
     return output
-    # return (header_txt, content_style, alert_style, alert_message,
-    #         switch_asassn_style, label_switch_asassn_warning_style,
-    #         handler.serialise(jdict['lightcurve']),
-    #         handler.serialise(jdict['metadata']))
 
 
 clientside_callback(

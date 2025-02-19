@@ -75,7 +75,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                     .map((row, index) => (row[selectedColIndex] === 1 ? index : null))
                     .filter(index => index !== null);  // Filter out any null values (non-selected rows)
 
-                console.log('selectedPoints =', selectedPoints);
+                // console.log('selectedPoints =', selectedPoints);
 
                 // Update the figure data:
                 const newData = figure.data.map(trace => {
@@ -127,7 +127,8 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 // Update folded_view in metadata based on the phase_view input
                 // Convert phase_view to integer (1 if not empty, otherwise 0)
                 console.log('phase_view =', phase_view);
-                const folded_view = phase_view.length > 0 ? 1 : 0; // Check if phase_view has any selected values
+                // const folded_view = phase_view.length > 0 ? 1 : 0; // Check if phase_view has any selected values
+                const folded_view = phase_view
                 console.log('folded_view =', folded_view);
 
                 // Update the metadata with the new folded_view value
@@ -200,16 +201,16 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 // console.log("Map permIndexMap:", permIndexMap);
 
                 // Get the indices of selected points from the customdata of the triggered event
-                console.log("triggerData =", triggerData);
+                // console.log("triggerData =", triggerData);
                 const selected_indices = triggerData.points.map(point => point.customdata[0]);
-                console.log("selected_indices =", selected_indices);
+                // console.log("selected_indices =", selected_indices);
 
                 // For each selected index, mark the corresponding point as selected in the table data
                 selected_indices.forEach(index => {
                     if (index in permIndexMap) {
                         const rowIndex = permIndexMap[index];  // Find row index from the permIndexMap
                         rows[rowIndex][columns.indexOf('selected')] = 1;  // Set 'selected' flag to 1
-                        console.log(`Updated the row ${rowIndex}:`, rows[rowIndex]);
+                        // console.log(`Updated the row ${rowIndex}:`, rows[rowIndex]);
                     }
                 });
                 // console.log("Renewed lightcurve:", lightcurve);

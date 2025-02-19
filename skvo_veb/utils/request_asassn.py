@@ -108,7 +108,7 @@ def load_asassn_lightcurve(gaia_id: int, band='g', force_update=False) -> CurveD
         lcd = CurveDash(gaia_id=gaia_id,
                         jd=df['jd'], flux=df['flux'], flux_err=df['flux_err'],
                         band=band,
-                        timescale='tcg',    # todo Check
+                        timescale='hjd',    # todo Check
                         epoch=epoch,
                         period=period, period_unit=str(day))
 

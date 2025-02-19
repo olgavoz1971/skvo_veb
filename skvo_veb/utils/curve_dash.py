@@ -12,22 +12,12 @@ from astropy import units as u
 
 
 def astropy_init(unit_str: str):
+    if not unit_str:
+        return u.Unit()
     try:
         return u.Unit(unit_str)
     except ValueError:
         return u.Unit()
-
-
-# class UnitWrapper:
-#     def __init__(self, unit_str: str | None):
-#         self.unit_str = unit_str
-#
-#     @property
-#     def astropy_unit(self):
-#         try:
-#             return u.Unit(self.unit_str)
-#         except ValueError:
-#             return u.Unit()  # Default unit if invalid
 
 
 class CurveDash:
@@ -60,12 +50,13 @@ class CurveDash:
                  jd=None, flux=None, flux_err=None,
                  flux_correction: str | None = None,
                  name: str = '', gaia_id=None,
+                 title: str = '',
                  band='',
                  time_unit: str = '', flux_unit: str = '',
-                 timescale: str | None = None,
-                 period: float | None = None, period_unit: str = '',
-                 epoch: float | None = None,
-                 cross_ident=None):
+                 timescale: str | None = None,  # one pf astropy.time Scale or 'hjd' for Heliocentric julian
+                 period: float | None = None, period_unit: str = 'd',
+                 epoch: float | None = 0,
+                 cross_ident=None, folded_view=0):
         """
         Initializes an instance of the class, allowing the creation of a lightcurve from a
         JSON string or directly from lists of time (jd) and flux values. The initialized
@@ -81,10 +72,13 @@ class CurveDash:
             Only used if `js_lightcurve` is not provided.
         """
         self.lightcurve: pandas.DataFrame | None = None
+        self.metadata = None
         if serialized is not None:
-            # Restore fro serialized data
+            # Restore from serialized data
             try:
                 di = json.loads(serialized)
+                if not di:  # empty dictionary
+                    return  # create an empty lcd
                 # self.lightcurve = pd.DataFrame.from_dict(di.get('lightcurve'))
                 lightcurve_dict = di.get('lightcurve')
                 self.lightcurve = pd.DataFrame(data=lightcurve_dict['data'], columns=lightcurve_dict['columns'])
@@ -95,37 +89,44 @@ class CurveDash:
         elif (jd is not None) and (flux is not None):
             # Create structures from the scratch
             if flux_err is None:
-                flux_err = -1 * flux / flux  # todo: find a better solution
+                flux_err = flux / flux  # todo: find a better solution
             df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err})
             df.loc[:, 'selected'] = 0  #
             # create permanent index. Keep it forever, protect against reindexing; important when cleaning data
             df.loc[:, 'perm_index'] = df.index
-            if period is not None and epoch is not None:
-                df.loc[:, 'phase'] = self.calc_phase(df['jd'], epoch, period, period_unit)
+            df.loc[:, 'phase'] = 0.0
+            # if period is not None and epoch is not None:
+            #     df.loc[:, 'phase'] = self.calc_phase(df['jd'], epoch, period, period_unit)
+            # else:
+            #     df.loc[:, 'phase'] = 0.0
             self.lightcurve = df
             self.metadata: dict = {'name': name, 'gaia_id': gaia_id, 'band': band, 'cross_ident': cross_ident,
                                    'time_unit': time_unit, 'timescale': timescale,
+                                   'title': title,
                                    'flux_correction': flux_correction,
                                    'flux_unit': flux_unit, 'period': period, 'period_unit': period_unit,
                                    'epoch': epoch,
-                                   'folded_view': 1}
+                                   'folded_view': folded_view}
+            self.recalc_phase()  # recalc phase after period and epoch setting
 
     def serialize(self):
         """
         Warning! This serialization approach is used by lightcurve_gaia.py and lightcurve_asassn etc.
         in JavaScript clientside callbacks, so I don't recommend changing it unless absolutely necessary
         """
+        if self.lightcurve is None or self.metadata is None:
+            return '{}'
         lc = self.lightcurve.to_dict(orient='split', index=False)
         metadata = self.metadata
         return json.dumps({'lightcurve': lc, 'metadata': metadata})
 
-    def serialize_lightcurve(self):
-        return json.dumps(self.lightcurve.to_dict())
+    @property
+    def title(self):
+        return self.metadata.get('title') if self.metadata else None
 
     @property
     def folded_view(self):
-        if self.metadata is not None:
-            return self.metadata.get('folded_view')
+        return self.metadata.get('folded_view') if self.metadata else None
 
     @folded_view.setter
     def folded_view(self, value):
@@ -137,11 +138,17 @@ class CurveDash:
         if self.metadata is not None:
             if self.metadata.get('flux_correction') is not None:
                 return self.metadata.get('flux_correction')
-        else:
-            return ''
+        return ''
+
+    def recalc_phase(self):
+        if self.period is not None and self.epoch is not None:
+            df = self.lightcurve
+            # Using loc to avoid SettingWithCopyWarning and ensure in -place DataFrame update
+            df.loc[:, 'phase'] = self.calc_phase(df['jd'], self.epoch, self.period, self.period_unit)
+            self.lightcurve = df
 
     @staticmethod
-    def calc_phase(time_arr, epoch_jd: float | None, period: float | None, period_unit='d'):
+    def calc_phase(time_arr, epoch_jd: float | None, period: float | None, period_unit: str):
         # noinspection PyUnresolvedReferences
         period_day = (period * astropy_init(period_unit)).to(u.day)
         phase = ((time_arr - (0 if epoch_jd is None else epoch_jd)) / (1 if period_day is None else period_day)) % 1
@@ -163,43 +170,93 @@ class CurveDash:
 
     @property
     def flux(self):
+        # It's important to leave 'is not None' here, because flux is pandas.Series, we can't ask 'if pandas.Series'
         return self.lightcurve.get('flux') if self.lightcurve is not None else None
+
+    @property
+    def flux_err(self):
+        return self.lightcurve.get('flux_err') if self.lightcurve is not None else None
 
     @property
     def jd(self):
         return self.lightcurve.get('jd') if self.lightcurve is not None else None
 
     @property
+    def phase(self):
+        return self.lightcurve.get('phase') if self.lightcurve is not None else None
+
+    @property
+    def perm_index(self):
+        """
+        Unique identifier of each, protected from cleaning and all kinds of point reordering.
+        It is stored in customdata of the plotly figure
+        :return:
+        """
+        return self.lightcurve.get('perm_index') if self.lightcurve is not None else None
+
+    @property
     def flux_unit(self):
-        return astropy_init(self.metadata.get('flux_unit'))
+        return self.metadata.get('flux_unit') if self.metadata else ''
+
+    @property
+    def flux_unit_ap(self):
+        # return astropy.unit if it is convertable
+        return astropy_init(self.metadata.get('flux_unit')) if self.metadata else None
 
     @property
     def time_unit(self):
-        return astropy_init(self.metadata.get('time_unit'))
+        return self.metadata.get('time_unit') if self.metadata else None
+
+    @property
+    def time_unit_ap(self):
+        # return astropy.unit if it is convertable
+        return astropy_init(self.metadata.get('time_unit')) if self.metadata else None
 
     @property
     def timescale(self):
-        return self.metadata.get('timescale')
+        return self.metadata.get('timescale') if self.metadata else None
 
     @property
     def period(self):
-        return self.metadata.get('period')
+        return self.metadata.get('period') if self.metadata is not None else None
+
+    @period.setter
+    def period(self, value):
+        if self.metadata is not None:
+            self.metadata['period'] = value
+            self.recalc_phase()
 
     @property
     def period_unit(self):
-        return astropy_init(self.metadata.get('period_unit'))
+        return self.metadata.get('period_unit') if self.metadata else None
+
+    @period_unit.setter
+    def period_unit(self, value):
+        if self.metadata is not None:
+            self.metadata['period_unit'] = value
+            self.recalc_phase()
+
+    @property
+    def period_unit_ap(self):
+        return astropy_init(self.metadata.get('period_unit')) if self.metadata else None
 
     @property
     def epoch(self):
-        return self.metadata.get('epoch')
+        return self.metadata.get('epoch') if self.metadata else None
+
+    @epoch.setter
+    def epoch(self, value):
+        if self.metadata is not None:
+            self.metadata['epoch'] = value
+            self.recalc_phase()
 
     @property
     def gaia_id(self):
-        return self.metadata.get('gaia_id')
+        return self.metadata.get('gaia_id') if self.metadata else None
 
     @property
     def band(self):
-        return self.metadata.get('band')
+        return self.metadata.get('band') if self.metadata else None
 
     def cut(self, left_border, right_border):
         """
@@ -237,10 +294,11 @@ class CurveDash:
         else:
             raise PipeException(f'Unsupported format {table_format}\n Valid formats: {str(self.format_dict.keys())}')
         tab = Table.from_pandas(self.lightcurve)
-        tab['flux'].unit = self.flux_unit
+        tab['flux'].unit = self.flux_unit_ap
         # u.Unit(self.metadata.get('flux_unit'))
-        tab['flux_err'].unit = self.flux_unit
-        tab['time'] = Time(tab['jd'], format='jd', scale=self.timescale)
+        tab['flux_err'].unit = self.flux_unit_ap
+        timescale = self.timescale if self.timescale != 'hjd' else None
+        tab['time'] = Time(tab['jd'], format='jd', scale=timescale)
         tab.remove_column('jd')
 
         if table_format == 'votable' or table_format == 'pandas.json':

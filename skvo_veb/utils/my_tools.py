@@ -2,6 +2,12 @@ import logging
 import re
 import time
 
+from astropy.coordinates import SkyCoord
+
+
+def safe_none(value):
+    return '' if value is None else value
+
 
 def timeit(f):
     def timed(*args, **kw):
@@ -10,6 +16,7 @@ def timeit(f):
         te = time.time()
         logging.debug(f'func:{f.__name__} args:{args, kw} took: {(te - ts):2.4f} sec')
         return result
+
     return timed
 
 
@@ -48,6 +55,61 @@ def tcb2tdb(jd_tcb):
     L_B = 1.550519768E-08
     dt = -L_B * (jd_tcb - 2443144.5003725) * 86400 - 6.55 * 1.0E-05
     return dt
+
+
+from astropy import units as u
+
+
+# def helio_to_bary(coord: SkyCoord, hjd, obs_name='La Silla Observatory'):
+def helio_to_bary(coords: list, hjd, unit=(u.hour, u.deg), obs_name='La Silla Observatory'):
+    """
+    ASAS-SN light curves use HJD (I hope, I'm right. http://asas-sn.ifa.hawaii.edu/skypatrol)
+    This code of  StuartLittlefair converts Heliocentric julian into Baricentric
+    https://gist.github.com/StuartLittlefair
+    I suppose, we can enter any EarthLocation, for example, 'La Silla Observatory'
+    An example: tdb = helio_to_bary([(23, -10)], 2455197.5, 'La Silla Observatory')
+
+    :param coords:
+    :param hjd: Heliocentric Julian Date
+    :param obs_name:
+    :return: TDB time
+    """
+    from astropy.coordinates import EarthLocation
+    from astropy.time import Time
+
+    helio = Time(hjd, scale='utc', format='jd')
+    obs = EarthLocation.of_site(obs_name)
+    coord = SkyCoord(coords, unit=unit)
+    ltt = helio.light_travel_time(coord, 'heliocentric', location=obs)
+    guess = helio - ltt
+    # if we assume guess is correct - how far is heliocentric time away from true value?
+    delta = (guess + guess.light_travel_time(coord, 'heliocentric', obs)).jd - helio.jd
+    # apply this correction
+    guess -= delta * u.d
+
+    ltt = guess.light_travel_time(coord, 'barycentric', obs)
+    return guess.tdb + ltt
+
+
+# ra = 24; dec = -10; hjd = 2455197.5
+# b = helio_to_bary([(ra, dec)], hjd)
+
+
+def bary_to_helio(coords, bjd, obs_name):
+    from astropy.coordinates import SkyCoord, EarthLocation
+    from astropy import units as u
+    from astropy.time import Time
+
+    bary = Time(bjd, scale='tdb', format='jd')
+    obs = EarthLocation.of_site(obs_name)
+    star = SkyCoord(coords, unit=(u.hour, u.deg))
+    ltt = bary.light_travel_time(star, 'barycentric', location=obs)
+    guess = bary - ltt
+    delta = (guess + guess.light_travel_time(star, 'barycentric', obs)).jd - bary.jd
+    guess -= delta * u.d
+
+    ltt = guess.light_travel_time(star, 'heliocentric', obs)
+    return guess.utc + ltt
 
 
 def explain_exception(e):
