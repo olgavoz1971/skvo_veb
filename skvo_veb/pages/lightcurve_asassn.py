@@ -303,7 +303,7 @@ clientside_callback(
 def download_asassn_lc(_, js_lightcurve, table_format):
     if js_lightcurve is None:
         raise PreventUpdate
-    lcd = CurveDash(js_lightcurve)
+    lcd = CurveDash.from_serialized(js_lightcurve)
     # bstring is "bytes"
     file_bstring = lcd.download(table_format)
     outfile_base = f'lc_asassn_{lcd.gaia_id}_{lcd.band}'.replace(' ', '_')

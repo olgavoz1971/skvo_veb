@@ -5,6 +5,10 @@ import time
 from astropy.coordinates import SkyCoord
 
 
+def sanitize_filename(name: str) -> str:
+    return re.sub(r'[<>:"/\\|?* ]', '_', name)
+
+
 def safe_none(value):
     return '' if value is None else value
 

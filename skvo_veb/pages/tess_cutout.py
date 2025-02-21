@@ -21,7 +21,9 @@ from lightkurve.correctors import PLDCorrector
 from skvo_veb.components import message
 from skvo_veb.utils import tess_cache as cache
 from skvo_veb.utils.curve_dash import CurveDash
-from skvo_veb.utils.my_tools import PipeException, safe_none
+from skvo_veb.utils.my_tools import PipeException, safe_none, sanitize_filename
+
+jd0_tess = 2457000  # btjd format. We can use the construction Time(2000, format="btjd", scale="tbd") directly,
 
 register_page(__name__, name='TESS cutout',
               order=3,
@@ -129,9 +131,11 @@ def layout():
                             dcc.Input(id='dec_tess_input', persistence=True, type='text', style={'width': '100%'}),
                         ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                         dbc.Stack([
-                            dbc.Label('Radius', html_for='radius_tess_input', style={'width': '7em'}),
+                            dbc.Label('Radius', id='radius_tess_lbl', html_for='radius_tess_input',
+                                      style={'width': '7em'}),
                             dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
                                       style={'width': '100%'}),
+                            dbc.Tooltip('Search radius in arcseconds', target='radius_tess_lbl', placement='bottom'),
                         ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                         dbc.Stack([
                             dbc.Button('Search', id='search_tess_button', size='sm'),
@@ -207,10 +211,8 @@ def layout():
                 # html.Div([
                 dbc.Row([
                     dbc.Col([
-                        # dbc.Row([
-                        #     dbc.Label('Visualization', html_for='input_tess_gamma',
-                        #               style={"textAlign": "center"}),
-                        # ], align='center'),  # Visualization label
+                        dbc.Row(dbc.Col(dbc.Label('Cutout Tools'),
+                                        style={'display': 'flex', 'justify-content': 'center'})),
                         dbc.Row([
                             dbc.Col([
                                 dbc.Stack([
@@ -300,59 +302,75 @@ def layout():
                 ], style={'marginBottom': '10px'}),  # align='center'),  # Px graph and Aladin
                 dbc.Row([
                     dbc.Col([
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Checklist(options=[{'label': 'Sub bkg', 'value': 1}], value=0,
-                                              style={'font-size': label_font_size},
-                                              id='sub_bkg_switch', persistence=True, switch=True),
-                            ], width='auto'),
-                            dbc.Col([
-                                dbc.Switch(label='Fatten', value=False,
-                                           style={'font-size': label_font_size},
-                                           id='flatten_switch', persistence=True),
-                            ], width='auto'),
-                        ], style={'marginBottom': '5px'}),
-                        dbc.Row([
-                            dcc.RadioItems(
-                                id='flux_trend_switch',
-                                options=[
-                                    {'label': 'flux', 'value': False},
-                                    {'label': 'trend', 'value': True},
-                                ],
-                                value=False,
-                                labelStyle=switch_label_style,
-                                style={'font-size': label_font_size},
-                            ),
-                        # ]),  # flatten flux/trend switch
-
-                        # dbc.Row([
+                        dbc.Row(dbc.Col(dbc.Label('Curve Tools'),
+                                        style={'display': 'flex', 'justify-content': 'center'})),
+                        dbc.Checklist(options=[{'label': 'Sub bkg', 'value': 1}], value=0,
+                                      style={'font-size': label_font_size},
+                                      id='sub_bkg_switch', persistence=True, switch=True),
+                        html.Details([
+                            html.Summary('Flatten'),
+                            dbc.Row([
+                                dbc.Col([
+                                    dbc.Switch(label='Flatten', value=False,
+                                               style={'font-size': label_font_size},
+                                               id='flatten_switch', persistence=False),
+                                ], width='auto'),  # flatten switch
+                                dbc.Col([
+                                    dcc.RadioItems(
+                                        id='flux_trend_switch',
+                                        options=[
+                                            {'label': 'flux', 'value': False},
+                                            {'label': 'trend', 'value': True},
+                                        ],
+                                        value=False,
+                                        labelStyle=switch_label_style,
+                                        style={'font-size': label_font_size},
+                                    ),
+                                ], width='auto'),  # flux / trend switch
+                            ]),  # flatten switch and flux / trend switch
                             dbc.Stack([
-                                dbc.Label('flatten window', html_for='flatten_window_input',
+                                dbc.Label('flatten window', id='flatten_window_lbl', html_for='flatten_window_input',
                                           style={'width': '7em', 'font-size': label_font_size}),
                                 dcc.Input(id='flatten_window_input', inputMode='numeric', persistence=False,
-                                          value=100.0, type='number',
-                                          style={'width': '100%'}),
+                                          value=101, type='number', style={'width': '100%'}),
                             ], direction='horizontal', gap=2),  # Flatten window
-                        # ]),  # flatten window
-                        # dbc.Row([
                             dbc.Stack([
-                                dbc.Label('break gap', html_for='flatten_break_gap_input',
+                                dbc.Label('break gap', id='flatten_break_gap_lbl', html_for='flatten_break_gap_input',
                                           style={'width': '7em', 'font-size': label_font_size}),
                                 dcc.Input(id='flatten_break_gap_input', inputMode='numeric', persistence=False,
                                           value=5, type='number',
                                           style={'width': '100%'}),
-                            ], direction='horizontal', gap=2),  # Flatten window
-                        # ]),  # flatten gap
-                        # dbc.Row([
+                            ], direction='horizontal', gap=2),  # Flatten gap
                             dbc.Stack([
-                                dbc.Label('order', html_for='flatten_order_input',
+                                dbc.Label('order', id='flatten_order_lbl', html_for='flatten_order_input',
                                           style={'width': '7em', 'font-size': label_font_size}),
                                 dcc.Input(id='flatten_order_input', inputMode='numeric', persistence=False,
                                           min=1, value=2, step=1, type='number',
                                           style={'width': '100%'}),
-                            ], direction='horizontal', gap=2),  # Flatten window
-                        # ]),  # flatten order
-                        # dbc.Row([
+                            ], direction='horizontal', gap=2),  # Flatten order
+                            # region tooltips
+                            dbc.Tooltip('Toggle to display either the flattened '
+                                        'light curve or the trend used for flattening',
+                                        target='flux_trend_switch', placement='bottom'),
+                            dbc.Tooltip('Switch on to remove long-term trends '
+                                        'using a Savitzky–Golay filter. Choose the parameters below',
+                                        target='flatten_switch', placement='bottom'),
+                            dbc.Tooltip('Length of the filter window '
+                                        '(number of data points, must be an odd positive integer). '
+                                        'Controls the smoothness of trend removal',
+                                        target='flatten_window_lbl', placement='bottom'),
+                            dbc.Tooltip('Splits the curve if time gaps exceed break_tolerance times the median gap',
+                                        target='flatten_break_gap_lbl', placement='bottom'),
+                            dbc.Tooltip('Polynomial order used to fit the samples (must be less than window length)',
+                                        target='flatten_order_lbl', placement='bottom'),
+                            # endregion
+                        ]),
+                        dbc.Row([
+                            dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm"),
+                        ], style={'marginBottom': '5px', 'marginTop': '5px',
+                                  'marginLeft': '2px', 'marginRight': '2px'}),
+                        html.Details([
+                            html.Summary('Plot Options'),
                             dcc.RadioItems(
                                 id='star_tess_switch',
                                 options=[
@@ -374,27 +392,9 @@ def layout():
                                 labelStyle=switch_label_style,
                                 style={'font-size': label_font_size},
                             ),
-                            # dcc.RadioItems(
-                            #     id='ordinate_switch',
-                            #     options=[
-                            #         {'label': 'flux', 'value': 'flux'},
-                            #         {'label': 'cent x', 'value': 'x'},
-                            #         {'label': 'cent y', 'value': 'y'},
-                            #     ],
-                            #     value='flux',
-                            #     labelStyle=switch_label_style,
-                            #     style={'font-size': label_font_size},
-                            # ),
-                        ], style={'marginBottom': '5px'}),  # curve tune
-                        dbc.Row([
-                            dbc.Stack([
-                                dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm"),
-                                dbc.Button('Compare', id='plot_difference_button', size="sm"),
-                            ], direction='horizontal', gap=2, style=stack_wrap_style),
-                        ], justify='between',
-                            className='gy-1',
-                            style={'marginBottom': '5px'}),  # plot buttons
-                        dbc.Row([dbc.Label('Selection:', style={'font-size': label_font_size})]),
+                            dbc.Button('Compare', id='plot_difference_button', size="sm")
+                        ]),  # plot / compare  curves options
+                        dbc.Row([dbc.Label('Selection:')]),
                         dbc.Row([
                             dbc.Stack([
                                 dbc.Button('Cut out', id='cut_tess_button', size="sm"),
@@ -462,17 +462,16 @@ def layout():
                 ], style={'marginBottom': '10px'}),  # Light Curves
             ], tab_id='tess_graph_tab', id='tess_graph_tab', disabled=True),  # Plot Tab
         ], active_tab='tess_search_tab', id='tess_tabs', style={'marginBottom': '5px'}),
-        dcc.Store(id='store_search_result'),  # things showed in the data table
-        dcc.Store(id='store_pixel_metadata'),  # stuff for recreation current pixel
-        dcc.Store(id='mask_store'),
+        dcc.Store(id='store_search_result'),  # things showed in the data table (the list of TESS sectors etc.)
+        dcc.Store(id='store_pixel_metadata'),  # stuff for recreation the current pixel
+        dcc.Store(id='mask_store'),  # mask for lightcurve calculation from cutouts
         dcc.Store(id='mask_slow_store'),  # for more complex mask operation, performed on the server side
         dcc.Store(id='mask_fast_store'),  # mask changed on client side
-        dcc.Store(id='wcs_store'),  # store wcs to syn with Aladin applet
-        dcc.Store(id='store_tess_cutout_lightcurve'),  # lightcurve data is here
-        dcc.Store(id='store_tess_cutout_lc_metadata'),  # metadata related to the lightcurve, e.g., Name, Sector, etc.
-        dcc.Store(id='lc2_store'),
-        dcc.Store(id='lc3_store'),
-        # dcc.Store(id="active_item_store", storage_type="memory"),  # Allows tracking recently opened accordion item
+        dcc.Store(id='wcs_store'),  # store wcs to sync with Aladin applet
+        dcc.Store(id='store_tess_cutout_lightcurve'),  # user's lightcurve is here
+        # dcc.Store(id='store_tess_cutout_curve_metadata'),   # lightcurve related metadata: Name, Sector, etc.
+        dcc.Store(id='lc2_store'),  # the second lightcurve is here
+        dcc.Store(id='lc3_store'),  # the third lightcurve is here
         dcc.Download(id='download_tess_lightcurve'),
     ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
 
@@ -566,10 +565,13 @@ def parse_table_data(selected_rows, table_data):
         sector_results=Output('download_sector_result', 'children'),
         graph_tab_disabled=Output('tess_graph_tab', 'disabled'),
         active_tab=Output('tess_tabs', 'active_tab'),
-        lc1=Output('store_tess_cutout_lightcurve', 'data', allow_duplicate=True),  # we need to clean it
-        lc2=Output('lc2_store', 'data', allow_duplicate=True),  # we need to clean it
-        lc3=Output('lc3_store', 'data', allow_duplicate=True),  # we need to clean it
-        lc_metadata=Output('store_tess_cutout_lc_metadata', 'data', allow_duplicate=True),  # we need to clean it
+        # clear this stuff when loading new data.
+        # It's better to do this via set_props, but the current version of Dash doesn't do this correctly
+        # in the background callback:
+        lc1=Output('store_tess_cutout_lightcurve', 'data', allow_duplicate=True),
+        lc2=Output('lc2_store', 'data', allow_duplicate=True),
+        lc3=Output('lc3_store', 'data', allow_duplicate=True),
+        # lc_metadata=Output('store_tess_cutout_curve_metadata', 'data', allow_duplicate=True),
     ),
     inputs=dict(
         n_clicks=Input('download_sector_button', 'n_clicks'),
@@ -594,9 +596,15 @@ def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
         raise PreventUpdate
     output_keys = list(ctx.outputs_grouping.keys())
     output = {key: dash.no_update for key in output_keys}
-    # lll
     try:
-        pixel_metadata, pixel_data = download_selected_pixel(selected_rows, table_data, pixel_di, size)
+        search_result_di = pixel_di.get('search_result', None)
+        pixel_metadata, pixel_data = download_selected_pixel(selected_rows, table_data, search_result_di, size)
+
+        lookup_name = pixel_di.get('lookup_name', None)  # restore user's lookup name of the object
+        if not lookup_name or (lookup_name == pixel_metadata['target']):
+            lookup_name = ''
+
+        pixel_metadata['lookup_name'] = lookup_name
         pixel_metadata['path'] = pixel_data.path
         pixel_metadata['shape'] = pixel_data.shape
         pixel_metadata['pipeline_mask'] = pixel_data.pipeline_mask
@@ -620,10 +628,7 @@ def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
     output['lc1'] = None
     output['lc2'] = None
     output['lc3'] = None
-    output['lc_metadata'] = None
-    # set_props('store_tess_cutout_lightcurve', {'data': None})
-    # set_props('store_tess_cutout_lc_metadata', {'data': None})
-
+    # output['lc_metadata'] = None
     return output
 
 
@@ -675,7 +680,9 @@ def plot_pixel(n_clicks, pixel_metadata, gamma, threshold, sum_it, mask_type, au
         coloraxis_colorbar = None
         coloraxis_showscale = False
     fig.update_layout(title=dict(
-        text=f'{pixel_metadata.get("target", "")} {pixel_metadata.get("author", "")}',
+        text=f'{pixel_metadata.get("lookup_name", "")} '
+             f'{pixel_metadata.get("target", "")} '
+             f'{pixel_metadata.get("author", "")}',
         font=dict(size=12)
     ),
         coloraxis_showscale=coloraxis_showscale,
@@ -687,11 +694,11 @@ def plot_pixel(n_clicks, pixel_metadata, gamma, threshold, sum_it, mask_type, au
     return fig, mask.tolist()
 
 
-def download_selected_pixel(selected_rows, table_data, pixel_di, size):
+def download_selected_pixel(selected_rows, table_data, search_result_di, size):
     pixel_args = parse_table_data(selected_rows, table_data)
     # restore SearchResults
-    pixel_table = Table.from_pandas(pd.DataFrame.from_dict(pixel_di))
-    pixel = lightkurve.SearchResult(pixel_table)
+    search_result_table_table = Table.from_pandas(pd.DataFrame.from_dict(search_result_di))
+    pixel = lightkurve.SearchResult(search_result_table_table)
     if len(pixel) <= pixel_args['#']:
         raise PreventUpdate  # todo specify this exception
     if pixel_args.get('author', '') == 'TESScut':
@@ -904,19 +911,25 @@ clientside_callback(
 )
 
 
-def create_lightcurve_figure(js_lightcurve: str | None, lc_metadata: dict):
-    lcd = CurveDash(js_lightcurve)
+def create_lightcurve_figure(js_lightcurve: str | None):
+    lcd = CurveDash.from_serialized(js_lightcurve)
     xaxis_title = f'time, {safe_none(lcd.time_unit)}'
     yaxis_title = f'flux {safe_none(lcd.flux_correction)}, {safe_none(lcd.flux_unit)}'
 
-    if lc_metadata:
-        title = (f'{lc_metadata.get("pixel_type", "").upper()} '
-                 # f'target={lc_metadata.get("target", "")} label={lc_metadata.get("label", "")} '
-                 f'{lc_metadata.get("target", "")} '
-                 f'sector:{lc_metadata.get("sector", "")} '
-                 f'{lc_metadata.get("author", "")}')
-    else:
-        title = ''
+    title = lcd.title
+    # if lc_metadata:
+    #     # title = (f'{lc_metadata.get("pixel_type", "").upper()} '
+    #     #          # f'target={lc_metadata.get("target", "")} label={lc_metadata.get("label", "")} '
+    #     #          f'{lc_metadata.get("target", "")} '
+    #     #          f'sector:{lc_metadata.get("sector", "")} '
+    #     #          f'{lc_metadata.get("author", "")}')
+    #     title = (f'{lc_metadata.get("pixel_type", "").upper()} '
+    #              f'{lc_metadata.get("lookup_name", "")} '
+    #              f'{lc_metadata.get("target", "")} '
+    #              f'sector:{lc_metadata.get("sector", "")} '
+    #              f'{lc_metadata.get("author", "")}')
+    # else:
+    #     title = ''
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=lcd.jd, y=lcd.flux,
@@ -935,11 +948,12 @@ def create_lightcurve_figure(js_lightcurve: str | None, lc_metadata: dict):
 
 
 @callback(
+    # region parameters
     output=dict(
         lc1=Output('store_tess_cutout_lightcurve', 'data'),  # todo make it an Input also
         lc2=Output('lc2_store', 'data'),
         lc3=Output('lc3_store', 'data'),
-        lc_metadata=Output('store_tess_cutout_lc_metadata', 'data'),
+        # lc_metadata=Output('store_tess_cutout_curve_metadata', 'data'),
     ),
     inputs=dict(n_clicks=Input('plot_curve_tess_button', 'n_clicks')),
     state=dict(
@@ -953,6 +967,7 @@ def create_lightcurve_figure(js_lightcurve: str | None, lc_metadata: dict):
         flatten_break_gap=State('flatten_break_gap_input', 'value'),
         flatten_order=State('flatten_order_input', 'value')
     ),
+    # endregion
     prevent_initial_call=True
 )
 def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
@@ -980,7 +995,7 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
 
         quality_mask = lc['quality'] == 0  # mask by TESS quality
         lc = lc[quality_mask]
-        jd = lc.time.value
+        jd = lc.time.value + jd0_tess
         flux_unit = str(lc.flux.unit)
         flux_err = lc.flux_err  # todo: take into account background errors?
         flux_correction = []
@@ -993,8 +1008,10 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
             flux = lc.flux
         if flatten:
             # see an explanation and examples here:
-            # https: // lightkurve.github.io / lightkurve / tutorials / index.html
-
+            # flatten:
+            # https://lightkurve.github.io/lightkurve/tutorials/1-getting-started/what-are-lightcurve-objects.html
+            # others:
+            # https://lightkurve.github.io/lightkurve/tutorials/index.html
             # pld = PLDCorrector(pixel_data)
             # corrected_lc = pld.correct(pld_aperture_mask=mask)
             # flux_correction = 'PLD corrected'
@@ -1021,17 +1038,31 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
         time_unit = lc.time.format
 
         name = lc.LABEL if lc.LABEL else pixel_metadata.get('target', '')
-        lcd = CurveDash(jd=jd, flux=flux, flux_err=flux_err, name=name,
-                        time_unit=time_unit, flux_unit=flux_unit,
-                        flux_correction=' '.join(flux_correction))
+
+        lcd = CurveDash(jd=jd, flux=flux, flux_err=flux_err,
+                        name=name, lookup_name=pixel_metadata.get('lookup_name', None),
+                        time_unit=time_unit, timescale='tdb',
+                        flux_unit=flux_unit, flux_correction=' '.join(flux_correction))
+
+        title = (f'{pixel_metadata.get("pixel_type", "").upper()} '
+                 f'{lcd.lookup_name} {name} '
+                 f'sector:{lc.sector} '
+                 f'{pixel_metadata.get("author", "")}')
+
+        lcd.title = title
         jsons = lcd.serialize()
 
-        lc_metadata = {'target': name,
-                       'img': pixel_metadata.get('pixel_type', '').upper(),
-                       'sector': lc.sector,
-                       'label': lc.LABEL,
-                       'author': pixel_metadata.get("author", "")}
-        output['lc_metadata'] = lc_metadata
+        # lookup_name = pixel_metadata.get('lookup_name', None)
+        # if not lookup_name or (lookup_name == name):
+        #     lookup_name = ''
+
+        # lc_metadata = {'target': name,
+        #                'lookup_name': pixel_metadata.get('lookup_name', ''),
+        #                'img': pixel_metadata.get('pixel_type', '').upper(),
+        #                'sector': lc.sector,
+        #                'label': lc.LABEL,
+        #                'author': pixel_metadata.get("author", "")}
+        # output['lc_metadata'] = lc_metadata
 
         if star_number == '1':
             output['lc1'] = jsons
@@ -1059,12 +1090,12 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
         lc2=Input('lc2_store', 'data'),
         lc3=Input('lc3_store', 'data'),
     ),
-    state=dict(
-        lc_metadata=State('store_tess_cutout_lc_metadata', 'data'),
-    ),
+    # state=dict(
+    #     lc_metadata=State('store_tess_cutout_curve_metadata', 'data'),
+    # ),
     prevent_initial_call=True
 )
-def plot_lightcurve(lc1, lc2, lc3, lc_metadata):
+def plot_lightcurve(lc1, lc2, lc3):
     # It can happen that we enter here on all triggers at the same time:
     triggered_ids = {t['prop_id'].split('.')[0] for t in ctx.triggered}
     if not triggered_ids:
@@ -1079,13 +1110,13 @@ def plot_lightcurve(lc1, lc2, lc3, lc_metadata):
 
     try:
         if 'store_tess_cutout_lightcurve' in triggered_ids:
-            output['fig1'] = create_lightcurve_figure(lc1, lc_metadata)
+            output['fig1'] = create_lightcurve_figure(lc1)
             active_item = ['accordion_item_1'] if lc1 else []  # close an empty accordion section if lc1 id None
         if 'lc2_store' in triggered_ids:
-            output['fig2'] = create_lightcurve_figure(lc2, lc_metadata)
+            output['fig2'] = create_lightcurve_figure(lc2)
             active_item = ['accordion_item_2'] if lc2 else []
         if 'lc3_store' in triggered_ids:
-            output['fig3'] = create_lightcurve_figure(lc3, lc_metadata)
+            output['fig3'] = create_lightcurve_figure(lc3)
             active_item = ['accordion_item_3'] if lc3 else []
 
         set_props('div_tess_alert', {'children': '', 'style': {'display': 'none'}})
@@ -1112,8 +1143,10 @@ def plot_difference(n_clicks, jsons_1, jsons_2, comparison_method):
         raise PreventUpdate
     fig = dash.no_update
     try:
-        lcd1 = CurveDash(jsons_1)
-        lcd2 = CurveDash(jsons_2)
+        if jsons_1 is None or jsons_2 is None:
+            raise PipeException('Plot both: the First and Second Light Curves first')
+        lcd1 = CurveDash.from_serialized(jsons_1)
+        lcd2 = CurveDash.from_serialized(jsons_2)
 
         # Both curves have the same jd ticks
         # search for common time pieces:
@@ -1284,8 +1317,9 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
             output['table_data'] = data
         else:
             raise PipeException('Empty data')
-        output['table_header'] = f'{pixel_type.upper()} {target}'  # Serialize Lightkurve.SearchResult to store it
-        output['store_pixel'] = pixel.table.to_pandas().to_dict()
+        output['table_header'] = f'{pixel_type.upper()} {target}'
+        pixel_di = {'lookup_name': f'{target}', 'search_result': pixel.table.to_pandas().to_dict()}
+        output['store_pixel'] = pixel_di  # Serialize Lightkurve.SearchResult to store it
         output['selected_rows'] = [0] if data else []  # select the first row by default
         output['content_style'] = {'display': 'block'}  # show the table
         output['alert_style'] = {'display': 'none'}  # hide the alert
@@ -1306,23 +1340,25 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
 @callback(Output('download_tess_lightcurve', 'data'),  # ------ Download -----
           Input('btn_download_tess', 'n_clicks'),
           State('store_tess_cutout_lightcurve', 'data'),
-          State('store_tess_cutout_lc_metadata', 'data'),
+          # State('store_tess_cutout_curve_metadata', 'data'),
           State('select_tess_format', 'value'),
           prevent_initial_call=True)
-def download_tess_lightcurve(n_clicks, js_lightcurve, di_metadata, table_format):
+def download_tess_lightcurve(n_clicks, js_lightcurve, table_format):
     """
-    Downloads light curve into user's computer
+    Downloads the light curve to user's computer
+    Add metadata to the Table.metadata
     """
     if not n_clicks:
         raise PreventUpdate
     if js_lightcurve is None:
         raise PreventUpdate
     try:
-        lcd = CurveDash(js_lightcurve)
+        lcd = CurveDash.from_serialized(js_lightcurve)
         # bstring is "bytes"
-        file_bstring = lcd.download(table_format)
+        file_bstring = lcd.download(table_format)  # todo: here add table metadata with the lookup name
 
-        outfile_base = f'lc_tess_' + "_".join(f"{key}_{value}" for key, value in di_metadata.items()).replace(" ", "_")
+        outfile_base = f'lc_tess_' + sanitize_filename(lcd.title)
+
         ext = lcd.get_file_extension(table_format)
         outfile = f'{outfile_base}.{ext}'
 
@@ -1360,7 +1396,7 @@ def handle_selection(_1, _2, selected_data, js_lightcurve):
         raise PreventUpdate
     left_border, right_border = selected_data['range']['x']
     try:
-        lcd = CurveDash(js_lightcurve)
+        lcd = CurveDash.from_serialized(js_lightcurve)
         if ctx.triggered_id == 'cut_tess_button':
             lcd.cut(left_border, right_border)
         else:
