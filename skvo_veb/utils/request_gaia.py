@@ -94,12 +94,15 @@ def extract_gaia_id(source_id: str):
         password=getenv("DB_PASS")
     )
     cursor = conn.cursor()
-    name = '%' + '%'.join(source_id.split())
+    # name = '%' + '%'.join(source_id.split())
+    name = '\m' + source_id + '\M'      # to catch  "V* EY Oph"
     # name = source_id.strip().replace(' ', '%')
     # psql_str = (f'select gaia_id,simbad,vsx from {psql_table_cross_ident} '
     #             f'where simbad ilike \'{name}\' or vsx ilike \'{name}\'')
+    # psql_str = (f'select gaia_id,simbad,vsx from {psql_table_cross_ident} '
+    #             f'where simbad ilike %s or vsx ilike %s')
     psql_str = (f'select gaia_id,simbad,vsx from {psql_table_cross_ident} '
-                f'where simbad ilike %s or vsx ilike %s')
+                f'where simbad ~*  %s or vsx ~*  %s')
     cursor.execute(psql_str, (name, name))
     rows = cursor.fetchall()
     conn.commit()
@@ -648,11 +651,13 @@ def decipher_source_id(source_id):
         return gaia_id
 
     # M.b. this name is present in tho local crossident:
-    if (gaia_id := extract_gaia_id(source_id)) is not None:
-        return gaia_id
+    if not getenv('DEBUG_LOCAL'):
+        if (gaia_id := extract_gaia_id(source_id)) is not None:
+            return gaia_id
 
     # Suppose it is a simbad-resolvable name:
     if (gaia_id := ask_simbad.get_gaia_id_by_simbad_name(source_id)) is not None:  # long remote call
+        print(f'Finally Simbad found it {gaia_id} by {source_id}')
         return gaia_id
 
     # M.b. at least Vizier will be able to find it in the Gaia VEB table? This happens...

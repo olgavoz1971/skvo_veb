@@ -147,6 +147,19 @@ def _load_lightcurve(source_id: str, band: str, force_update=False) -> CurveDash
     return lcd
 
 
+# @callback(
+#     Output('store_asassn_lightcurve', 'data', allow_duplicate=True),
+#     Input('graph-asassn-curve', 'selectedData'),
+#     Input('graph-asassn-curve', 'clickData'),
+#     State('store_asassn_lightcurve', 'data'),
+#     prevent_initial_call=True)
+# def test_tmp(_1, _2, js):
+#     import json
+#     t = json.loads(js)
+#     print(t['metadata'])
+#     return js
+
+
 @callback(
     output=dict(
         header=Output('h1-asassn', 'children'),
@@ -249,6 +262,9 @@ clientside_callback(
     State('store_asassn_lightcurve', 'data'),
     prevent_initial_call=True
 )
+# todo: I suspect this function -- selectData --  in rounding gaia_id, therefore we loose part of gaia_id
+# Try to make gaia_id string (not an integer as it is)
+# todo: Check how JavaScript keeps long jd tails
 
 clientside_callback(
     ClientsideFunction(

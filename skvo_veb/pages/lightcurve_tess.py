@@ -1,5 +1,7 @@
+# DISK_CACHE = True  # this makes sense only for a local version
+DISK_CACHE = False
+
 import logging
-from astropy.table import Table
 import base64
 import io
 from pathlib import Path
@@ -17,323 +19,328 @@ import plotly.express as px
 import lightkurve as lk
 from dash.exceptions import PreventUpdate
 from lightkurve import LightkurveError
-from skvo_veb.components import message
-from skvo_veb.utils import tess_cache as cache
-from skvo_veb.utils.curve_dash import CurveDash
-from skvo_veb.utils.my_tools import safe_none, PipeException, sanitize_filename
 
-# app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-
-register_page(__name__, name='TESS curve',
-              order=4,
-              path='/igebc/tess_lc',
-              title='TESS lightcurve Tool',
-              in_navbar=True)
+try:
+    from skvo_veb.components import message
+    from skvo_veb.utils import tess_cache as cache
+    from skvo_veb.utils.curve_dash import CurveDash, jd0
+    from skvo_veb.utils.my_tools import safe_none, PipeException, sanitize_filename
+except ImportError:
+    import message  # todo rename this, give him more specific name
+    # noinspection PyUnresolvedReferences
+    import tess_cache as cache
+    # noinspection PyUnresolvedReferences
+    from curve_dash import CurveDash, jd0
+    # noinspection PyUnresolvedReferences
+    from utils import PipeException, safe_none, sanitize_filename  # todo rename utils, give him more specific name
 
 label_font_size = '0.8em'
 switch_label_style = {'display': 'inline-block', 'padding': '2px', 'font-size': label_font_size}
+switch_label_style_vert = {'display': 'block', 'padding': '2px', 'font-size': label_font_size}
 stack_wrap_style = {'marginBottom': '5px', 'flexWrap': 'wrap'}
 periodogram_param_style = {'width': '4em'}
 periodogram_result_style = {'width': '3em', 'fontWeight': 'bold', 'font-size': label_font_size}
 
 jd0_tess = 2457000  # btjd format. We can use the construction Time(2000, format="btjd", scale="tbd") directly,
 
-
 # but this "btjd" is not included in the original astropy.time module and appear after including lightkurve only.
 # So I decided it would be safer to add this constant explicitly
 
 
-def layout():
-    fig_lc = px.scatter()
-    fig_lc.update_traces(
-        selected={'marker': {'color': 'orange', 'size': 5}},
-        hoverinfo='none',  # Important
-        hovertemplate=None,  # Important
-    )
-    fig_lc.update_layout(xaxis={'title': 'phase', 'tickformat': '.1f'},
-                         yaxis_title='flux',
-                         # showlegend=True,
-                         margin=dict(l=0, b=20),  # r=50, t=50, b=20))
-                         # dragmode='lasso'  # Enable lasso selection mode by default
-                         )
-    fig_pg = px.scatter()  # Periodogram
-    return dbc.Container([
-        html.H1('TESS Lightcurve Tool', className="text-primary text-left fs-3"),
-        dbc.Tabs([
-            dbc.Tab(label='Search', children=[
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Stack([
-                            dbc.Label('Object', html_for='obj_name_tess_lc_input',
-                                      style={'width': '7em'}),
-                            dcc.Input(id='obj_name_tess_lc_input', persistence=True, type='text',
-                                      style={'width': '100%'}),  # , 'border-radius': '5px'}),
-                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                        dbc.Stack([
-                            dbc.Button('Search', id='basic_search_tess_lc_button', size="sm"),
-                            dbc.Button('Cancel', id='cancel_basic_search_tess_lc_button',
-                                       size="sm", disabled=True),
-                        ], direction='horizontal', gap=2, style=stack_wrap_style),
-                        dbc.Stack([
-                            dcc.Upload(
-                                id='upload_tess_lc',
-                                children=dbc.Button('Upload', size="sm"),
-                                multiple=False,
-                                # accept='.csv,.fits,.txt',   # lll
-                                accept=','.join(f'.{ext}' for ext in CurveDash.get_extension_list()),
+page_layout = dbc.Container([
+    html.H1('TESS Lightcurve Tool', className="text-primary text-left fs-3"),
+    dbc.Tabs([
+        dbc.Tab(label='Search', children=[
+            dbc.Row([
+                dbc.Col([
+                    dbc.Stack([
+                        dbc.Label('Object', html_for='obj_name_tess_lc_input',
+                                  style={'width': '7em'}),
+                        dcc.Input(id='obj_name_tess_lc_input', persistence=True, type='text',
+                                  style={'width': '100%'}),  # , 'border-radius': '5px'}),
+                    ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                    dbc.Stack([
+                        dbc.Button('Search', id='basic_search_tess_lc_button', size="sm"),
+                        dbc.Button('Cancel', id='cancel_basic_search_tess_lc_button',
+                                   size="sm", disabled=True),
+                    ], direction='horizontal', gap=2, style=stack_wrap_style),
+                    dbc.Stack([
+                        dcc.Upload(
+                            id='upload_tess_lc',
+                            children=dbc.Button('Upload', size="sm"),
+                            multiple=False,
+                            # accept='.csv,.fits,.txt',
+                            accept=','.join(f'.{ext}' for ext in CurveDash.get_extension_list()),
+                        ),
+                        dbc.Switch(id='append_switch', label='Append', value=False,
+                                   label_style=switch_label_style, persistence=False),
+                    ], direction='horizontal', gap=2, style=stack_wrap_style),  # upload
+                ], lg=2, md=3, sm=4, xs=12, style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),
+                # Search tools
+                dbc.Col([
+                    dbc.Spinner(children=[
+                        html.Div([
+                            dbc.Row([
+                                dbc.Col([
+                                    html.H3("Search results", id="table_tess_lc_header"),
+                                ], md=6, sm=12),
+                                dbc.Col([
+                                    dbc.Stack([
+                                        dbc.Button('Download curves', id='download_tess_lc_button', size="sm"),
+                                        dbc.Button('Cancel', id='cancel_download_tess_lc_button',
+                                                   size="sm", disabled=True),
+                                    ], direction='horizontal', gap=2, style=stack_wrap_style),
+                                    # style={'marginBottom': '5px'}),
+                                    # style={'width': '100%'}),
+                                ], md=6, sm=12),
+                            ], style={'marginBottom': '10px', 'marginTop': '10px'}),
+                            dbc.Row([
+                                DataTable(
+                                    id="data_tess_lc_table",
+                                    columns=[{"name": col, "id": col} for col in
+                                             ["#", "mission", "year", "author", "exptime", "target"]],
+                                    data=[],
+                                    row_selectable="multi",
+                                    fixed_rows={'headers': True},  # Freeze the header
+                                    style_table={
+                                        'maxHeight': '50vh',
+                                        'overflowY': 'auto',  # vertical scrolling
+                                        'overflowX': 'auto',  # horizontal scrolling
+                                    },
+                                    page_action="native", sort_action="native",
+                                    style_cell={"font-size": 14, 'textAlign': 'left'},
+                                    cell_selectable=False,
+                                    style_header={"font-size": 14, 'font-family': 'courier',
+                                                  'color': '#000',
+                                                  'backgroundColor': 'var(--bs-light)',
+                                                  'textAlign': 'left'},
+                                )
+                            ]),
+                        ], id="table_tess_lc_row", style={"display": "none"}),  # Search results
+                        html.Div(id='div_tess_lc_search_alert', style={"display": "none"}),  # Alert
+                    ]),
+                ], lg=10, md=9, sm=8, xs=12),  # SearchResults Table is here
+            ], style={'marginBottom': '10px'}),  # Search and SearchResults
+            dbc.Spinner(children=[
+                dbc.Label(id="download_tess_lc_result", children='',
+                          style={"color": "green", "text-align": "center"}),
+                html.Div(id='div_tess_lc_download_alert', style={"display": "none"}),  # Alert
+            ], spinner_style={
+                "align-items": "center",
+                "justify-content": "center",
+            }, color="primary",
+            ),
+        ], tab_id='tess_lc_search_tab'),
+        dbc.Tab(label='Plot', children=[
+            dbc.Row([
+                dbc.Col([
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label('Flux:', html_for='flux_tess_lc_switch',
+                                      style={'width': '7em', 'font-size': label_font_size}),
+                            dcc.RadioItems(
+                                id='flux_tess_lc_switch',
+                                options=[
+                                    {'label': 'pdc_sap', 'value': 'pdcsap'},
+                                    {'label': 'sap', 'value': 'sap'},
+                                    {'label': 'default', 'value': 'default'},
+                                ],
+                                value='pdcsap',
+                                labelStyle=switch_label_style,
+                            ),  # flux type radio
+                        ], md=6, sm=6),
+                        dbc.Col([
+                            dbc.Row(dbc.Label('Curve:', html_for='stitch_switch',
+                                              style={'width': '7em', 'font-size': label_font_size})),
+                            dbc.Row(
+                                dbc.Switch(id='stitch_switch', label='Stitch', value=False,
+                                           label_style=switch_label_style,
+                                           # style=switch_label_style,
+                                           persistence=True),
+                                # todo: add callback fired by stitch switch toggle, check it with user curve added
                             ),
-                            dbc.Switch(id='append_switch', label='Append', value=False,
-                                       label_style=switch_label_style, persistence=False),
-                        ], direction='horizontal', gap=2, style=stack_wrap_style),  # upload
+                        ], md=6, sm=6),
+                    ]),  # tune
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label('Period:', html_for='period_tess_lc_input',
+                                      style={'width': '4em', 'font-size': label_font_size}),
+                        ], width="auto"),
+                        dbc.Col([
+                            dbc.InputGroup([
+                                dcc.Input(id='period_tess_lc_input', inputMode='numeric', persistence=False,
+                                          value=None, type='number',
+                                          # step=0.00001,
+                                          # style={'width': '100%', 'min-width': '5ch'}),
+                                          style={'width': '5em'}),  # 'font-size': label_font_size}
+                                dbc.Button('x', size='sm', color='light', id='clear_period_btn')
+                            ]),
+                        ], width="auto"),
 
-                    ], md=2, sm=4, xs=12, style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),
-                    # Search tools
-                    dbc.Col([
-                        dbc.Spinner(children=[
-                            html.Div([
-                                dbc.Row([
-                                    dbc.Col([
-                                        html.H3("Search results", id="table_tess_lc_header"),
-                                    ], md=6, sm=12),
-                                    dbc.Col([
-                                        dbc.Stack([
-                                            dbc.Button('Download curves', id='download_tess_lc_button', size="sm"),
-                                            dbc.Button('Cancel', id='cancel_download_tess_lc_button',
-                                                       size="sm", disabled=True),
-                                        ], direction='horizontal', gap=2, style=stack_wrap_style),
-                                        # style={'marginBottom': '5px'}),
-                                        # style={'width': '100%'}),
-                                    ], md=6, sm=12),
-                                ], style={'marginBottom': '10px', 'marginTop': '10px'}),
-                                dbc.Row([
-                                    DataTable(
-                                        id="data_tess_lc_table",
-                                        columns=[{"name": col, "id": col} for col in
-                                                 ["#", "mission", "year", "author", "exptime", "target"]],
-                                        data=[],
-                                        row_selectable="multi",
-                                        fixed_rows={'headers': True},  # Freeze the header
-                                        style_table={
-                                            'maxHeight': '50vh',
-                                            'overflowY': 'auto',  # vertical scrolling
-                                            'overflowX': 'auto',  # horizontal scrolling
-                                        },
-                                        page_action="native", sort_action="native",
-                                        style_cell={"font-size": 14, 'textAlign': 'left'},
-                                        cell_selectable=False,
-                                        style_header={"font-size": 14, 'font-family': 'courier',
-                                                      'color': '#000',
-                                                      'backgroundColor': 'var(--bs-light)',
-                                                      'textAlign': 'left'},
-                                    )
-                                ]),
-                            ], id="table_tess_lc_row", style={"display": "none"}),  # Search results
-                            html.Div(id='div_tess_lc_search_alert', style={"display": "none"}),  # Alert
-                        ]),
-                    ], md=10, sm=8, xs=12),  # SearchResults Table is here
-                ], style={'marginBottom': '10px'}),  # Search and SearchResults
-                dbc.Spinner(children=[
-                    dbc.Label(id="download_tess_lc_result", children='',
-                              style={"color": "green", "text-align": "center"}),
-                    html.Div(id='div_tess_lc_download_alert', style={"display": "none"}),  # Alert
-                ], spinner_style={
-                    "align-items": "center",
-                    "justify-content": "center",
-                }, color="primary",
-                ),
-            ], tab_id='tess_lc_search_tab'),
-            dbc.Tab(label='Plot', children=[
-                dbc.Row([
-                    # html.H1('TESS GUI', className="text-primary text-left fs-3"),
-                    dbc.Col([
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Label('Flux:', html_for='flux_tess_lc_switch',
-                                          style={'width': '7em', 'font-size': label_font_size}),
-                                dcc.RadioItems(
-                                    id='flux_tess_lc_switch',
-                                    options=[
-                                        {'label': 'pdc_sap', 'value': 'pdcsap'},
-                                        {'label': 'sap', 'value': 'sap'},
-                                        {'label': 'default', 'value': 'default'},
-                                    ],
-                                    value='pdcsap',
-                                    labelStyle=switch_label_style,
-                                ),  # flux type radio
-                            ], md=6, sm=6),
-                            dbc.Col([
-                                dbc.Row(dbc.Label('Curve:', html_for='stitch_switch',
-                                                  style={'width': '7em', 'font-size': label_font_size})),
-                                dbc.Row(
-                                    dbc.Switch(id='stitch_switch', label='Stitch', value=False,
-                                               label_style=switch_label_style,
-                                               # style=switch_label_style,
-                                               persistence=True),
-                                    # todo: add callback fired by stitch switch toggle, check it with user curve added
-                                ),
-                            ], md=6, sm=6),
-                        ]),  # tune
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Label('Period:', html_for='period_tess_lc_input',
-                                          style={'width': '4em', 'font-size': label_font_size}),
-                            ], width="auto"),
-                            dbc.Col([
-                                dbc.InputGroup([
-                                    dcc.Input(id='period_tess_lc_input', inputMode='numeric', persistence=False,
-                                              value=None, type='number', step=0.00001,
-                                              # style={'width': '100%', 'min-width': '5ch'}),
-                                              style={'width': '5em'}),  # 'font-size': label_font_size}
-                                    dbc.Button('x', size='sm', color='light', id='clear_period_btn')
-                                ]),
-                            ], width="auto"),
+                    ], style={'marginBottom': '5px', 'padding': '2px', 'alignItems': 'center'}),  # Period
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Label(f'Epoch-{jd0}:', html_for='epoch_tess_lc_input',
+                                      style={'width': '4em', 'font-size': label_font_size}),
+                        ], width="auto"),
+                        dbc.Col([
+                            dbc.InputGroup([
+                                dcc.Input(id='epoch_tess_lc_input', inputMode='numeric', persistence=False,
+                                          value=0.0, type='number',
+                                          style={'width': '5em'}),  # 'font-size': label_font_size}
+                                dbc.Button('x', size='sm', color='light', id='clear_epoch_btn')
+                            ]),
+                        ], width="auto"),
+                    ], style={'marginBottom': '5px', 'padding': '2px', 'alignItems': 'center'}),  # Epoch
+                    dbc.Row([
+                        dbc.Col([dbc.Switch(id='fold_tess_lc_switch', label='Folded view', value=False,
+                                            label_style=switch_label_style_vert,
+                                            # style=switch_label_style,
+                                            persistence=False)], width=6),
+                        dbc.Col([
+                            dbc.Button('Shift to min', size='sm', id='shift_epoch_btn')
+                        ], width=6),
 
-                        ], style={'marginBottom': '5px', 'padding': '2px', 'alignItems': 'center'}),  # Period
+                    ], style={'marginBottom': '5px', 'marginLeft': '0px'}),  # switch Folded View
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Button('Replot Curve', id='recreate_selected_tess_lc_button', size="sm",
+                                       style={'width': '100%'}),
+                        ], width=6),  # plot button
+                        dbc.Col([
+                            dbc.Button('Recalc Phase', id='recalc_phase_tess_lc_button', size="sm",
+                                       style={'width': '100%'}),
+                        ], width=6),  # fold/unfold switch
+                    ], style={'marginBottom': '5px'}, className='g-2'),  # two buttons
+                    dbc.Row([
+                        dbc.Stack([
+                            dbc.Select(options=CurveDash.get_format_list(),
+                                       value=CurveDash.get_format_list()[0],
+                                       id='select_tess_lc_format',
+                                       style={'max-width': '7em', 'font-size': label_font_size}),
+                            dbc.Button('Download', id='btn_download_tess_lc', size="sm"),
+                        ], direction='horizontal', gap=2, style=stack_wrap_style),
+                    ],  # justify='between',
+                        # className='gy-1',  # class adds vertical gaps between folded columns
+                        style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
+                    html.Details([
+                        html.Summary('Periodogram'),
                         dbc.Row([
-                            dbc.Switch(id='fold_tess_lc_switch', label='Folded view', value=False,
-                                       label_style=switch_label_style,
-                                       # style=switch_label_style,
-                                       persistence=False),
-                        ], style={'marginBottom': '5px', 'marginLeft': '0px'}),  # switch Folded View
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Button('Replot Curve', id='recreate_selected_tess_lc_button', size="sm",
-                                           style={'width': '100%'}),
-                            ], width=6),  # plot button
-                            dbc.Col([
-                                dbc.Button('Recalc Phase', id='recalc_phase_tess_lc_button', size="sm",
-                                           style={'width': '100%'}),
-                            ], width=6),  # fold/unfold switch
-                        ], style={'marginBottom': '5px'}, className='g-2'),  # two buttons
-                        dbc.Row([
+                            dcc.RadioItems(
+                                id='period_freq_tess_lc_switch',
+                                options=[
+                                    {'label': 'Period', 'value': 'period'},
+                                    {'label': 'Freq', 'value': 'frequency'},
+                                ],
+                                value='period',
+                                persistence=True,
+                                labelStyle={'display': 'row', 'padding': '4px', 'font-size': label_font_size},
+                            ),  # Period / frequency switch
+                            dcc.RadioItems(
+                                id='method_tess_lc_switch',
+                                options=[
+                                    {'label': ' Lomb-Scargle', 'value': 'ls'},
+                                    {'label': 'BLS', 'value': 'bls'},
+                                ],
+                                value='ls',
+                                persistence=True,
+                                labelStyle={'display': 'row', 'padding': '4px', 'font-size': label_font_size},
+                            ),  # Period / frequency switch
                             dbc.Stack([
-                                dbc.Select(options=CurveDash.get_format_list(),
-                                           value=CurveDash.get_format_list()[0],
-                                           id='select_tess_lc_format',
-                                           style={'max-width': '7em', 'font-size': label_font_size}),
-                                dbc.Button('Download', id='btn_download_tess_lc', size="sm"),
+                                dbc.Label('Oversample:', html_for='periodogram_oversample',
+                                          style={'width': '7em', 'font-size': label_font_size}),
+                                dcc.Input(id='periodogram_oversample',
+                                          value=1, inputMode='numeric',
+                                          type='number',
+                                          # style={'width': '100%', 'font-size': label_font_size}),
+                                          style=periodogram_param_style),
+                            ], direction='horizontal', gap=2, style=stack_wrap_style),  # periodogram_oversample
+                            dbc.Stack([
+                                dbc.Label('Period min:', html_for='periodogram_min',
+                                          style={'width': '7em', 'font-size': label_font_size}),
+                                dcc.Input(id='periodogram_min', min=0,
+                                          value=None, inputMode='numeric', type='number',
+                                          # style={'width': '100%', 'font-size': label_font_size}),
+                                          style=periodogram_param_style),
                             ], direction='horizontal', gap=2, style=stack_wrap_style),
-                        ],  # justify='between',
-                            # className='gy-1',  # class adds vertical gaps between folded columns
-                            style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
-                        html.Details([
-                            html.Summary('Periodogram'),
-                            dbc.Row([
-                                dcc.RadioItems(
-                                    id='period_freq_tess_lc_switch',
-                                    options=[
-                                        {'label': 'Period', 'value': 'period'},
-                                        {'label': 'Freq', 'value': 'frequency'},
-                                    ],
-                                    value='period',
-                                    persistence=True,
-                                    labelStyle={'display': 'row', 'padding': '4px', 'font-size': label_font_size},
-                                ),  # Period / frequency switch
-                                dcc.RadioItems(
-                                    id='method_tess_lc_switch',
-                                    options=[
-                                        {'label': ' Lomb-Scargle', 'value': 'ls'},
-                                        {'label': 'BLS', 'value': 'bls'},
-                                    ],
-                                    value='ls',
-                                    persistence=True,
-                                    labelStyle={'display': 'row', 'padding': '4px', 'font-size': label_font_size},
-                                ),  # Period / frequency switch
-                                dbc.Stack([
-                                    dbc.Label('Oversample:', html_for='periodogram_oversample',
-                                              style={'width': '7em', 'font-size': label_font_size}),
-                                    dcc.Input(id='periodogram_oversample',
-                                              value=1, inputMode='numeric',
-                                              type='number',
-                                              # style={'width': '100%', 'font-size': label_font_size}),
-                                              style=periodogram_param_style),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),  # periodogram_oversample
-                                dbc.Stack([
-                                    dbc.Label('Period min:', html_for='periodogram_min',
-                                              style={'width': '7em', 'font-size': label_font_size}),
-                                    dcc.Input(id='periodogram_min', min=0,
-                                              value=None, inputMode='numeric', type='number',
-                                              # style={'width': '100%', 'font-size': label_font_size}),
-                                              style=periodogram_param_style),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),
-                                dbc.Stack([
-                                    dbc.Label('Period max:', html_for='periodogram_max',
-                                              style={'width': '7em', 'font-size': label_font_size}),
-                                    dcc.Input(id='periodogram_max', min=0,
-                                              value=None, inputMode='numeric', type='number',
-                                              # style={'width': '100%', 'font-size': label_font_size}),
-                                              style=periodogram_param_style),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),
-                                dbc.Stack([
-                                    dbc.Label('N terms:', html_for='Duration:',
-                                              style={'width': '7em', 'font-size': label_font_size}),
-                                    dcc.Input(id='periodogram_nterms', value=1, min=1,
-                                              inputMode='numeric', type='number',
-                                              # style={'width': '100%', 'font-size': label_font_size}),
-                                              style=periodogram_param_style),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),
-                                dbc.Stack([
-                                    dbc.Label('Duration:', html_for='periodogram_duration',
-                                              style={'width': '7em', 'font-size': label_font_size}),
-                                    dcc.Input(id='periodogram_duration', value=None, min=0,
-                                              inputMode='numeric', type='number',
-                                              # style={'width': '100%', 'font-size': label_font_size}),
-                                              style=periodogram_param_style),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),
-                            ]),  # periodogram parameters
-                            dbc.Row([
-                                dbc.Col([dbc.Button('Calculate', id='periodogram_tess_lc_button', size="sm",
-                                                    style={'width': '100%'})]),
-                            ], style={'marginBottom': '5px'}),  # periodogram button
-                            dbc.Row([
-                                dbc.Stack([
-                                    dbc.Label('Period:', html_for='period1_res',
-                                              style={'width': '6em', 'font-size': label_font_size}),
-                                    dbc.Label(id='period1_res', style=periodogram_result_style),
-                                    dbc.Button('Use', id='use_period1_btn', size='sm'),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),
-                                dbc.Stack([
-                                    dbc.Label('Period*2:', html_for='period2_res',
-                                              style={'width': '6em', 'font-size': label_font_size}),
-                                    dbc.Label(id='period2_res', style=periodogram_result_style),
-                                    dbc.Button('Use', id='use_period2_btn', size='sm'),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),
-                                dbc.Stack([
-                                    dbc.Label('Period*4:', html_for='period4_res',
-                                              style={'width': '6em', 'font-size': label_font_size}),
-                                    dbc.Label(id='period4_res', style=periodogram_result_style),
-                                    dbc.Button('Use', id='use_period4_btn', size='sm'),
-                                ], direction='horizontal', gap=2, style=stack_wrap_style),
-                            ], id='tess_lc_periodogram_results_row', style={'display': "none"}),  # periodogram results
-                        ]),
-                    ], md=2, sm=12, style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # Tools
-                    dbc.Col([
-                        html.Div(children='', id='div_tess_lc_alert', style={'display': 'none'}),
+                            dbc.Stack([
+                                dbc.Label('Period max:', html_for='periodogram_max',
+                                          style={'width': '7em', 'font-size': label_font_size}),
+                                dcc.Input(id='periodogram_max', min=0,
+                                          value=None, inputMode='numeric', type='number',
+                                          # style={'width': '100%', 'font-size': label_font_size}),
+                                          style=periodogram_param_style),
+                            ], direction='horizontal', gap=2, style=stack_wrap_style),
+                            dbc.Stack([
+                                dbc.Label('N terms:', html_for='Duration:',
+                                          style={'width': '7em', 'font-size': label_font_size}),
+                                dcc.Input(id='periodogram_nterms', value=1, min=1,
+                                          inputMode='numeric', type='number',
+                                          # style={'width': '100%', 'font-size': label_font_size}),
+                                          style=periodogram_param_style),
+                            ], direction='horizontal', gap=2, style=stack_wrap_style),
+                            dbc.Stack([
+                                dbc.Label('Duration:', html_for='periodogram_duration',
+                                          style={'width': '7em', 'font-size': label_font_size}),
+                                dcc.Input(id='periodogram_duration', value=None, min=0,
+                                          inputMode='numeric', type='number',
+                                          # style={'width': '100%', 'font-size': label_font_size}),
+                                          style=periodogram_param_style),
+                            ], direction='horizontal', gap=2, style=stack_wrap_style),
+                        ]),  # periodogram parameters
                         dbc.Row([
-                            dcc.Graph(id='graph_tess_lc',
-                                      figure=fig_lc,
-                                      config={'displaylogo': False},
-                                      # # style={'height': '70vh'},  # 100% of the viewport height
-                                      # style={'height': '40vh', 'width': '100%'},  # 100% of the viewport height
-                                      # # style={'height': '100%'}
-                                      ),
-                        ], class_name="g-0"),  # g-0 -- Row without 'gutters'   light curve graph
-                        dbc.Row([
-                            dcc.Graph(
-                                id='graph_tess_lc_periodogram',
-                                figure=fig_pg,
-                                config={'displaylogo': False}
-                            )
-                        ], id='tess_lc_periodogram_row', style={'display': 'none'})  # periodogram
+                            dbc.Col(dbc.Button('Calculate', id='periodogram_tess_lc_button', size="sm",
+                                               style={'width': '100%'}), lg=6, md=12),
+                            dbc.Col(dbc.Button('Cancel', id='cancel_periodogram_tess_lc_button', size="sm",
+                                               style={'width': '100%'}, disabled=True), lg=6, md=12),
+                        ], style={'marginBottom': '5px'}, className='g-2'),  # periodogram button
+                        html.Div([
+                            dbc.Stack([
+                                dbc.Label('Use:', style={'marginBottom': 0, 'font-size': label_font_size}),
+                                dbc.Button('Period', id='use_period1_btn', size='sm'),
+                                dbc.Button('Period*2', id='use_period2_btn', size='sm'),
+                                dbc.Button('Period*3 ', id='use_period4_btn', size='sm'),
+                                # dbc.Label(id='period1_res', style=periodogram_result_style),
+                            ], gap=2, style=stack_wrap_style),
+                        ], id='tess_lc_periodogram_results_row', style={'display': 'none'}),  # periodogram results
+                    ]),
+                ], lg=2, md=3, sm=4, xs=12,
+                    style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # Tools
+                dbc.Col([
+                    html.Div(children='', id='div_tess_lc_alert', style={'display': 'none'}),
+                    # dbc.Row([
+                    dcc.Graph(id='graph_tess_lc',
+                              figure=px.scatter(),
+                              config={'displaylogo': False},
+                              # # style={'height': '70vh'},  # 100% of the viewport height
+                              # style={'height': '40vh', 'width': '100%'},  # 100% of the viewport height
+                              # # style={'height': '100%'}
+                              ),
+                    # ], class_name="g-0"),  # g-0 -- Row without 'gutters'   light curve graph
+                    # dbc.Row([
+                    html.Div([
+                        dcc.Graph(
+                            id='graph_tess_lc_periodogram',
+                            figure=px.scatter(),
+                            config={'displaylogo': False}
+                        )
+                    ], id='tess_lc_periodogram_row', style={'display': 'none'}),
+                    # ], id='tess_lc_periodogram_row', style={'display': 'none'})  # periodogram
 
-                    ], md=10, sm=12),  # style={'padding': '2px', 'background': 'blue'})    # Graph
-                ], style={'marginBottom': '10px'}),
-            ], tab_id='tess_lc_graph_tab', id='tess_lc_graph_tab', disabled=False),
-        ], active_tab='tess_lc_search_tab', id='tess_lc_tabs', style={'marginBottom': '5px'}),
-        dcc.Store(id='store_tess_lightcurve'),  # downloaded lightcurve(s)
-        dcc.Store(id='store_tess_lightcurve_metadata'),  # data related to the lightcurve search (user's lookup_name)
-        dcc.Download(id='download_tess_lc_lightcurve'),
-    ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
+                ], lg=10, md=9, sm=8, xs=12),  # Graph
+            ], style={'marginBottom': '10px'}),
+        ], tab_id='tess_lc_graph_tab', id='tess_lc_graph_tab', disabled=False),
+    ], active_tab='tess_lc_search_tab', id='tess_lc_tabs', style={'marginBottom': '5px'}),
+    dcc.Store(id='store_tess_lightcurve'),  # downloaded lightcurve(s)
+    dcc.Store(id='store_tess_lightcurve_metadata'),  # data related to the lightcurve search (user's lookup_name)
+    dcc.Store(id='store_tess_periodogram_result'),  # [period, 2*period, 4*period]
+    dcc.Download(id='download_tess_lc_lightcurve'),
+], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
+
+if not DISK_CACHE and __name__ == '__main__':  # local version without diskcache
+    background_callback = False
+else:
+    background_callback = True
 
 
 @callback(
@@ -353,7 +360,7 @@ def layout():
     running=[(Output('basic_search_tess_lc_button', 'disabled'), True, False),
              (Output('cancel_basic_search_tess_lc_button', 'disabled'), False, True)],
     cancel=[Input('cancel_basic_search_tess_lc_button', 'n_clicks')],
-    background=True,
+    background=background_callback,
     prevent_initial_call=True
 )
 def basic_search(n_clicks, obj_name):
@@ -401,7 +408,7 @@ def basic_search(n_clicks, obj_name):
 
 
 def create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method, metadata,
-                                 phase_view=False, period=None) -> str:
+                                 phase_view=False, period=None, epoch=None) -> str:
     # return a serialized CurveDash object
     import re
     if not selected_rows or not table_data:
@@ -490,32 +497,21 @@ def create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method,
         jd = lc_res.time.value
         flux = lc_res.flux.value
         flux_err = lc_res.flux_err.value
-        if hasattr(flux, 'mask'):
-            valid_jd = jd[~flux.mask]
-            valid_flux = flux[~flux.mask]
-            valid_flux_err = flux_err[~flux.mask]
-        else:
-            valid_jd = jd
-            valid_flux = flux
-            valid_flux_err = flux_err
     else:
-        valid_jd = np.array([], dtype=float)
-        valid_flux = np.array([], dtype=float)
-        valid_flux_err = np.array([], dtype=float)
+        jd = np.array([], dtype=float)
+        flux = np.array([], dtype=float)
+        flux_err = np.array([], dtype=float)
         for lc in lc_list:
-            flux = lc.flux.value
-            flux_err = lc.flux_err.value
-            jd = lc.time.value
-            if hasattr(flux, 'mask'):
-                valid_jd = np.append(valid_jd, jd[~flux.mask])
-                valid_flux = np.append(valid_flux, flux[~flux.mask])
-                valid_flux_err = np.append(valid_flux_err, flux_err[~flux.mask])
-            else:
-                valid_jd = np.append(valid_jd, jd)
-                valid_flux = np.append(valid_flux, flux)
-                valid_flux_err = np.append(valid_flux_err, flux_err)
-    valid_flux_err = np.ma.filled(valid_flux_err, 0)
-    # time_unit = lc_list[0].time.format
+            flux = np.append(lc.flux.value, flux)
+            flux_err = np.append(lc.flux_err.value, flux_err)
+            jd = np.append(lc.time.value, jd)
+            # Pandas converts masked values into NaNs in the following code
+
+    # In the following code, we lose the mask, but Pandas converts masked values into NaNs.
+    # And this is ok in most cases, where this is not, I mask NaNs back
+    # I reject the idea of filling them with 0, because later code (e.g., Periodogram) may fail
+    # when zero errors are present.
+
     time_unit = 'jd'
     # Add information into lc title
     if stitch:
@@ -524,11 +520,12 @@ def create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method,
         flux_unit = str(lc_list[0].flux.unit)
 
     lcd = CurveDash(name=lc_list[0].LABEL, lookup_name=metadata.get('lookup_name', None),
-                    jd=valid_jd + jd0_tess, flux=valid_flux, flux_err=valid_flux_err,
+                    jd=jd + jd0_tess, flux=flux, flux_err=flux_err,
                     time_unit=time_unit, timescale='tdb',
                     flux_unit=flux_unit,
                     folded_view=phase_view,
                     period=period,
+                    epoch=epoch,
                     period_unit='d')
     title = (f'{lcd.lookup_name} {lc_list[0].LABEL} sector: {",".join(sectors)} author: {",".join(authors)} '
              f'methods: {",".join(flux_origins)}')
@@ -549,7 +546,6 @@ def plot_lc(js_lightcurve: str, phase_view: bool):
         x_column = 'phase'
         xaxis_title = 'phase'
     else:
-        jd0 = 2450000
         x = lcd.jd - jd0
         x_column = 'jd'
         xaxis_title = f'jd-{jd0}, {safe_none(lcd.time_unit)} {lcd.timescale}'
@@ -622,16 +618,19 @@ def plot_lc(js_lightcurve: str, phase_view: bool):
         flux_method=State('flux_tess_lc_switch', 'value'),
         metadata=State('store_tess_lightcurve_metadata', 'data'),
         phase_view=State('fold_tess_lc_switch', 'value'),
-        period=State('period_tess_lc_input', 'value')
+        period=State('period_tess_lc_input', 'value'),
+        epoch=State('epoch_tess_lc_input', 'value')
     ),
     prevent_initial_call=True
 )
-def replot_selected_curves(n_clicks, selected_rows, table_data, stitch, flux_method, metadata, phase_view, period):
+def replot_selected_curves(n_clicks, selected_rows, table_data, stitch, flux_method, metadata, phase_view,
+                           period, epoch):
     if n_clicks is None:
         raise PreventUpdate
     try:
+        epoch = epoch + jd0 if epoch else epoch
         lc = create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method, metadata,
-                                          phase_view, period)
+                                          phase_view, period, epoch)
         set_props('div_tess_lc_alert', {'children': None, 'style': {'display': 'none'}})
         output = {'lc': lc}
         return output
@@ -645,19 +644,59 @@ def replot_selected_curves(n_clicks, selected_rows, table_data, stitch, flux_met
 
 @callback(
     Output('store_tess_lightcurve', 'data', allow_duplicate=True),
+    Output('epoch_tess_lc_input', 'value', allow_duplicate=True),
+    Input('shift_epoch_btn', 'n_clicks'),
+    State('store_tess_lightcurve', 'data'),
+    State('period_tess_lc_input', 'value'),
+    State('epoch_tess_lc_input', 'value'),
+    prevent_initial_call=True)
+def shift_to_minimum(n_clicks, js_lightcurve, period, epoch):
+    if n_clicks is None:
+        raise PreventUpdate
+    try:
+        if period is None:
+            raise PipeException('Set the period and try again')
+        if epoch is None:
+            epoch = 0
+        lcd = CurveDash.from_serialized(js_lightcurve)
+        lcd.period = period
+        lcd.epoch = epoch + jd0
+        # phi_min = lcd.find_phase_of_min_simple()
+        phi_min = lcd.find_phase_of_min_gauss()
+        logging.debug(f'{phi_min=}')
+        new_epoch = lcd.shift_epoch(phi_min)
+        lcd.epoch = new_epoch
+        lcd.recalc_phase()
+        set_props('div_tess_lc_alert', {'children': None, 'style': {'display': 'none'}})
+        return lcd.serialize(), new_epoch - jd0
+    except Exception as e:
+        logging.warning(f'lightcurve_tess.shift_to_minimum: {e}')
+        alert_message = message.warning_alert(e)
+        set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
+        return dash.no_update, dash.no_update
+
+
+@callback(
+    Output('store_tess_lightcurve', 'data', allow_duplicate=True),
     Input('recalc_phase_tess_lc_button', 'n_clicks'),
     State('store_tess_lightcurve', 'data'),
     State('period_tess_lc_input', 'value'),
+    State('epoch_tess_lc_input', 'value'),
     prevent_initial_call=True)
-def recalculate_phase(n_clicks, js_lightcurve, period):
+def recalculate_phase(n_clicks, js_lightcurve, period, epoch):
     # todo: rewrite it on the client side
     if n_clicks is None:
         raise PreventUpdate
     try:
         lcd = CurveDash.from_serialized(js_lightcurve)
-        lcd.period = period
-        period_unit = 'd'
-        lcd.period_unit = period_unit
+        if period:
+            lcd.period = period
+            period_unit = 'd'
+            lcd.period_unit = period_unit
+        if epoch:
+            lcd.epoch = epoch + jd0
+
+        lcd.recalc_phase()
         set_props('div_tess_lc_alert', {'children': None, 'style': {'display': 'none'}})
         return lcd.serialize()
     except Exception as e:
@@ -673,9 +712,10 @@ def recalculate_phase(n_clicks, js_lightcurve, period):
           Input('fold_tess_lc_switch', 'value'),
           State('store_tess_lightcurve', 'data'),
           State('period_tess_lc_input', 'value'),
+          State('epoch_tess_lc_input', 'value'),
           prevent_initial_call=True
           )
-def fold(phase_view, js_lightcurve, period):
+def fold(phase_view, js_lightcurve, period, epoch):
     try:
         if phase_view and not period:
             raise PipeException('Set the period and try again')
@@ -684,6 +724,9 @@ def fold(phase_view, js_lightcurve, period):
             lcd.period = period
             period_unit = 'd'
             lcd.period_unit = period_unit
+            if epoch:
+                lcd.epoch = epoch + jd0
+            lcd.recalc_phase()
         lcd.folded_view = phase_view
         set_props('div_tess_lc_alert', {'children': None, 'style': {'display': 'none'}})
         return lcd.serialize(), dash.no_update
@@ -716,9 +759,7 @@ def plot_tess_curve(js_lightcurve, phase_view):
     output=dict(
         pg_fig=Output('graph_tess_lc_periodogram', 'figure'),
         pg_row_style=Output('tess_lc_periodogram_row', 'style'),
-        period1_res=Output('period1_res', 'children'),
-        period2_res=Output('period2_res', 'children'),
-        period4_res=Output('period4_res', 'children'),
+        periodogram_result_store=Output('store_tess_periodogram_result', 'data'),
         results_row_style=Output('tess_lc_periodogram_results_row', 'style'),
     ),
     inputs=dict(n_clicks=Input('periodogram_tess_lc_button', 'n_clicks')),
@@ -731,10 +772,18 @@ def plot_tess_curve(js_lightcurve, phase_view):
         p_min=State('periodogram_min', 'value'),
         p_max=State('periodogram_max', 'value'),
         duration=State('periodogram_duration', 'value'),
-    ), prevent_initial_call=True)
+    ),
+    background=background_callback,
+    running=[(Output('periodogram_tess_lc_button', 'disabled'), True, False),
+             (Output('cancel_periodogram_tess_lc_button', 'disabled'), False, True)],
+    cancel=[Input('cancel_periodogram_tess_lc_button', 'n_clicks')],
+    prevent_initial_call=True)
 def periodogram(n_clicks, js_lightcurve, period_freq, method, nterms, oversample, p_min, p_max, duration):
+    import warnings
+
     if not n_clicks:
         raise PreventUpdate
+
     output_keys = list(ctx.outputs_grouping.keys())
     output = {key: dash.no_update for key in output_keys}
 
@@ -755,11 +804,22 @@ def periodogram(n_clicks, js_lightcurve, period_freq, method, nterms, oversample
 
         # pg = kurve.to_periodogram(method=method, oversample_factor=oversample,
         #                           minimum_period=p_min, maximum_period=p_max, nterms=nterms, duration=duration)
-        pg = kurve.to_periodogram(**kwargs)
 
-        output['period1_res'] = f'{pg.period_at_max_power.value: .4f}'
-        output['period2_res'] = f'{pg.period_at_max_power.value * 2: .4f}'  # double P
-        output['period4_res'] = f'{pg.period_at_max_power.value * 4: .4f}'  # quadruple P
+        # Turn specified warnings into exceptions. It's pretty useful when working with the lightkurve module
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', RuntimeWarning)
+                pg = kurve.to_periodogram(**kwargs)  # Will raise an exception on divide-by-zero
+        except RuntimeWarning as e:
+            raise PipeException(f'Periodogram computation failed: {str(e)}')
+
+        # output['period1_res'] = f'{pg.period_at_max_power.value: .4f}'
+        # output['period2_res'] = f'{pg.period_at_max_power.value * 2: .4f}'  # double P
+        # output['period4_res'] = f'{pg.period_at_max_power.value * 4: .4f}'  # quadruple P
+        output['periodogram_result_store'] = pg.period_at_max_power.value
+        # output['period1_res'] = f'{pg.period_at_max_power.value}'
+        # output['period2_res'] = f'{pg.period_at_max_power.value * 2}'  # double P
+        # output['period4_res'] = f'{pg.period_at_max_power.value * 4}'  # quadruple P
 
         if period_freq == 'frequency':
             x = pg.frequency
@@ -797,6 +857,8 @@ def periodogram(n_clicks, js_lightcurve, period_freq, method, nterms, oversample
         set_props('div_tess_lc_alert', {'children': None, 'style': {'display': 'none'}})
     except Exception as e:
         logging.warning(f'lightcurve_tess.periodogram: {e}')
+        output['results_row_style'] = {'display': 'none'}
+        output['pg_row_style'] = {'display': 'none'}
         alert_message = message.warning_alert(e)
         set_props('div_tess_lc_alert', {'children': alert_message, 'style': {'display': 'block'}})
 
@@ -875,6 +937,8 @@ clientside_callback(
         message_results=Output('download_tess_lc_result', 'children'),
         graph_tab_disabled=Output('tess_lc_graph_tab', 'disabled'),
         active_tab=Output('tess_lc_tabs', 'active_tab'),
+        periodogram_results_row_style=Output('tess_lc_periodogram_results_row', 'style', allow_duplicate=True),
+        pg_row_style=Output('tess_lc_periodogram_row', 'style', allow_duplicate=True),
     ),
     inputs=dict(n_clicks=Input('download_tess_lc_button', 'n_clicks')),
     state=dict(
@@ -884,7 +948,7 @@ clientside_callback(
         flux_method=State('flux_tess_lc_switch', 'value'),
         metadata=State('store_tess_lightcurve_metadata', 'data'),
     ),
-    background=True,
+    background=background_callback,
     running=[(Output('download_tess_lc_button', 'disabled'), True, False),
              (Output('cancel_download_tess_lc_button', 'disabled'), False, True)],
     cancel=[Input('cancel_download_tess_lc_button', 'n_clicks')],
@@ -903,6 +967,9 @@ def download_tess_lc_curve(n_clicks, selected_rows, table_data, stitch, flux_met
     output_keys = list(ctx.outputs_grouping.keys())
     output = {key: dash.no_update for key in output_keys}
 
+    # Clean Periodogram stuff
+    output['periodogram_results_row_style'] = {'display': 'none'}
+    output['pg_row_style'] = {'display': 'none'}
     try:
         # Store the loaded light curve into dcc.Store
         output['lightcurve'] = create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method, metadata)
@@ -956,49 +1023,79 @@ def download_to_user_tess_lc_lightcurve(n_clicks, js_lightcurve, table_format):
     return ret
 
 
+# @callback(Output('period_tess_lc_input', 'value', allow_duplicate=True),
+#           Input('use_period1_btn', 'n_clicks'),
+#           State('period1_res', 'children'),
+#           prevent_initial_call=True)
+# def use_period1(n_clicks, period_str):
+#     if not n_clicks:
+#         raise PreventUpdate
+#     try:
+#         period = float(period_str)
+#     except ValueError:
+#         logging.warning(f'lightcurve_tess.use_period1: {period_str} could not be converted into the float')
+#         period = None
+#     return period
+
+
+# @callback(Output('period_tess_lc_input', 'value', allow_duplicate=True),
+#           Input('use_period2_btn', 'n_clicks'),
+#           State('period2_res', 'children'),
+#           prevent_initial_call=True)
+# def use_period2(n_clicks, period_str):
+#     if not n_clicks:
+#         raise PreventUpdate
+#     try:
+#         period = float(period_str)
+#     except ValueError:
+#         logging.warning(f'lightcurve_tess.use_period2: {period_str} could not be converted into the float')
+#         period = None
+#     return period
+
+
 @callback(Output('period_tess_lc_input', 'value', allow_duplicate=True),
           Input('use_period1_btn', 'n_clicks'),
-          State('period1_res', 'children'),
+          State('store_tess_periodogram_result', 'data'),
           prevent_initial_call=True)
-def use_period1(n_clicks, period_str):
+def use_period(n_clicks, period):
     if not n_clicks:
         raise PreventUpdate
     try:
-        period = float(period_str)
+        return period
     except ValueError:
-        logging.warning(f'lightcurve_tess.use_period1: {period_str} could not be converted into the float')
-        period = None
-    return period
+        logging.warning(f'lightcurve_tess.use_period: {period} could not be converted into the float')
+        return None
 
 
 @callback(Output('period_tess_lc_input', 'value', allow_duplicate=True),
           Input('use_period2_btn', 'n_clicks'),
-          State('period2_res', 'children'),
+          State('store_tess_periodogram_result', 'data'),
           prevent_initial_call=True)
-def use_period2(n_clicks, period_str):
+def use_period2(n_clicks, period):
     if not n_clicks:
         raise PreventUpdate
     try:
-        period = float(period_str)
+        return 2 * period
     except ValueError:
-        logging.warning(f'lightcurve_tess.use_period2: {period_str} could not be converted into the float')
-        period = None
-    return period
+        logging.warning(f'lightcurve_tess.use_period2: {period} could not be converted into the float')
+        return None
 
 
 @callback(Output('period_tess_lc_input', 'value', allow_duplicate=True),
           Input('use_period4_btn', 'n_clicks'),
-          State('period4_res', 'children'),
+          State('store_tess_periodogram_result', 'data'),
           prevent_initial_call=True)
-def use_period4(n_clicks, period_str):
+def use_period4(n_clicks, period):
     if not n_clicks:
         raise PreventUpdate
     try:
-        period = float(period_str)
+        return 4 * period
+        # period = float(period)
     except ValueError:
-        logging.warning(f'lightcurve_tess.use_period4: {period_str} could not be converted into the float')
-        period = None
-    return period
+        logging.warning(f'lightcurve_tess.use_period4: {period} could not be converted into the float')
+        # period = None
+        return None
+    # return 4 * period
 
 
 clientside_callback(
@@ -1008,6 +1105,16 @@ clientside_callback(
     ),
     Output('period_tess_lc_input', 'value'),
     Input('clear_period_btn', 'n_clicks'),
+    prevent_initial_call=True
+)
+
+clientside_callback(
+    ClientsideFunction(
+        namespace='clientside',
+        function_name='clearInput'
+    ),
+    Output('epoch_tess_lc_input', 'value'),
+    Input('clear_epoch_btn', 'n_clicks'),
     prevent_initial_call=True
 )
 
@@ -1062,3 +1169,37 @@ def handle_upload(contents, filename, append, js_lightcurve):
         set_props('div_tess_lc_download_alert', {'children': alert_message, 'style': {'display': 'block'}})
     set_props('fold_tess_lc_switch', {'value': False})
     return output
+
+
+if __name__ == '__main__':  # So this is a local version
+    from dash import Dash
+
+    if DISK_CACHE:
+        # Background callback management:
+        import diskcache
+        from dash import DiskcacheManager
+
+        # from pathlib import Path
+
+        diskcache_dir = Path('diskcache')
+        diskcache_dir.mkdir(exist_ok=True)
+        background_callback_manager = DiskcacheManager(diskcache.Cache(diskcache_dir.name))
+    else:
+        background_callback_manager = None
+
+    app = Dash(__name__,
+               background_callback_manager=background_callback_manager,
+               external_stylesheets=[dbc.themes.BOOTSTRAP])
+
+    app.layout = page_layout
+    app.run_server(debug=True, port=8051)
+else:
+    register_page(__name__, name='TESS curve',
+                  order=4,
+                  path='/igebc/tess_lc',
+                  title='TESS lightcurve Tool',
+                  in_navbar=True)
+
+
+    def layout():
+        return page_layout

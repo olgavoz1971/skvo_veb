@@ -3,6 +3,8 @@ from dash import html, dcc, callback, Input, Output, State, clientside_callback
 import dash_bootstrap_components as dbc
 from skvo_veb.utils.my_tools import timeit
 from skvo_veb.utils.coord import is_it_coord
+import urllib.parse
+
 
 dash.register_page(__name__, name='Search',
                    order=1,
@@ -68,9 +70,11 @@ def layout():
           State('inp-radius', 'value'),
           prevent_initial_call=True)
 def handle_input(_1, _2, id_coord_str, radius):
+    encoded_id_coord_str = urllib.parse.quote(id_coord_str)
     if is_it_coord(id_coord_str):
-        return f'/igebc/coo?coords={id_coord_str}&radius={radius}'
-    return f'/igebc/star?source_id={id_coord_str}'
+        return f'/igebc/coo?coords={encoded_id_coord_str}&radius={radius}'
+        # return f'/igebc/coo?coords={id_coord_str}&radius={radius}'
+    return f'/igebc/star?source_id={encoded_id_coord_str}'
     # return f'/igebc/star?source_id={id_coord_str}&catalogue={catalogue}'
 
 

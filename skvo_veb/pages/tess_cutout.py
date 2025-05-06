@@ -1,8 +1,9 @@
-import logging
+# DISK_CACHE = True
+DISK_CACHE = False
 
+import logging
 import aladin_lite_react_component
 import astropy.units as u
-import dash
 import dash_bootstrap_components as dbc
 import lightkurve
 import numpy as np
@@ -12,24 +13,414 @@ import plotly.graph_objects as go
 from astropy.coordinates import SkyCoord
 from astropy.table import Table
 from astropy.wcs import WCS
-from dash import dcc, html, Input, Output, State, register_page, callback, clientside_callback, ctx, set_props
+from dash import (dcc, html, Input, Output, State, register_page, callback, clientside_callback, ctx, set_props,
+                  no_update)
 from dash.dash_table import DataTable
 from dash.exceptions import PreventUpdate
 from lightkurve import search_targetpixelfile, search_tesscut, LightkurveError
 from lightkurve.correctors import PLDCorrector
 
-from skvo_veb.components import message
-from skvo_veb.utils import tess_cache as cache
-from skvo_veb.utils.curve_dash import CurveDash
-from skvo_veb.utils.my_tools import PipeException, safe_none, sanitize_filename
+try:
+    from skvo_veb.components import message
+    from skvo_veb.utils import tess_cache as cache
+    from skvo_veb.utils.curve_dash import CurveDash
+    from skvo_veb.utils.my_tools import PipeException, safe_none, log_gamma, sanitize_filename
+except ImportError:  # LOCAL_VERSION
+    import message  # todo rename this, give him more specific name
+    # noinspection PyUnresolvedReferences
+    import tess_cache as cache
+    # noinspection PyUnresolvedReferences
+    from curve_dash import CurveDash
+    # noinspection PyUnresolvedReferences
+    from utils import PipeException, safe_none, log_gamma, sanitize_filename
+    # todo rename utils, give him more specific name
 
 jd0_tess = 2457000  # btjd format. We can use the construction Time(2000, format="btjd", scale="tbd") directly,
 
-register_page(__name__, name='TESS cutout',
-              order=3,
-              path='/igebc/tess',
-              title='TESS cutout Tool',
-              in_navbar=True)
+switch_label_style = {'display': 'inline-block', 'padding': '5px'}  # In the row, otherwise 'block'
+# switch_label_style = {'display': 'block', 'padding': '2px'}  # In the row, otherwise 'block'
+label_font_size = '0.8em'
+stack_wrap_style = {'marginBottom': '5px', 'flexWrap': 'wrap'}
+
+page_layout = dbc.Container([
+    html.H1('TESS Cutout Tool', className="text-primary text-left fs-3"),
+    dbc.Tabs([
+        dbc.Tab(label='Search Sector', children=[
+            dbc.Row([
+                dbc.Col([
+                    dbc.Stack([
+                        dbc.Label('Object', html_for='obj_name_tess_input', style={'width': '7em'}),
+                        dcc.Input(id='obj_name_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                    ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                    dbc.Stack([
+                        dbc.Label('RA', html_for='ra_input', style={'width': '7em'}),
+                        dcc.Input(id='ra_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                    ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                    dbc.Stack([
+                        dbc.Label('DEC', html_for='dec_tess_input', style={'width': '7em'}),
+                        dcc.Input(id='dec_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                    ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                    dbc.Stack([
+                        dbc.Label('Radius', id='radius_tess_lbl', html_for='radius_tess_input',
+                                  style={'width': '7em'}),
+                        dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
+                                  style={'width': '100%'}),
+                        dbc.Tooltip('Search radius in arcseconds', target='radius_tess_lbl', placement='bottom'),
+                    ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                    dbc.Stack([
+                        dbc.Button('Search', id='search_tess_button', size='sm'),
+                        dbc.Button('Cancel', id='cancel_search_tess_button', size='sm', disabled=True),
+                    ], direction='horizontal', gap=2, style=stack_wrap_style),
+                    dcc.RadioItems(
+                        id='ffi_tpf_switch',
+                        options=[
+                            {'label': 'FFI', 'value': 'ffi'},
+                            {'label': 'TPF', 'value': 'tpf'}
+                        ],
+                        value='tpf',
+                        labelStyle={'display': 'inline-block', 'padding': '5px'}),
+                ], lg=2, md=3, sm=4, xs=12,
+                    style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # SearchTools
+                dbc.Col([
+                    dbc.Spinner(children=[
+                        html.Div([
+                            dbc.Row([
+                                dbc.Col([
+                                    html.H3("Search results", id="table_tess_header"),
+                                ], md=6, sm=12),
+                                dbc.Col([
+                                    dbc.Stack([
+                                        dbc.Label('Size', html_for='size_ffi_input', style={'width': '7em'}),
+                                        dcc.Input(id='size_ffi_input', persistence=True, type='number', min=1,
+                                                  value=11,
+                                                  style={'width': '100%'}),
+                                        dbc.Button('Download sector', id='download_sector_button', size="sm",
+                                                   style={'width': '100%'}),
+                                        dbc.Button('Cancel', id='cancel_download_sector_button', size="sm",
+                                                   style={'width': '100%'}),
+                                    ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
+                                ], md=6, sm=12),
+                            ]),
+                            dbc.Row([
+                                DataTable(
+                                    id="data_tess_table",
+                                    columns=[{"name": col, "id": col} for col in
+                                             ["#", "mission", "year", "author", "exptime", "target", "distance"]],
+                                    data=[],
+                                    row_selectable="single",
+                                    fixed_rows={'headers': True},  # Freeze the header
+                                    style_table={
+                                        'maxHeight': '30vh',
+                                        'overflowY': 'auto',  # vertical scrolling
+                                        'overflowX': 'auto',  # horizontal scrolling
+                                    },
+                                    page_action="native", sort_action="native",
+                                    style_cell={"font-size": 14, 'textAlign': 'left'},
+                                    cell_selectable=False,
+                                    style_header={"font-size": 14, 'font-family': 'courier',
+                                                  'color': '#000',
+                                                  'backgroundColor': 'var(--bs-light)',
+                                                  'textAlign': 'left'},
+                                )
+                            ]),
+                        ], id="search_results_row", style={"display": "none"}),  # Search results
+                        html.Div(id='div_tess_search_alert', style={"display": "none"}),  # Alert
+                    ]),
+                ], lg=10, md=9, sm=8, xs=12),
+            ], style={'marginBottom': '10px'}),  # Search and SearchResults
+            dbc.Spinner(children=[
+                dbc.Label(id="download_sector_result", children='',
+                          style={"color": "green", "text-align": "center"}),
+                html.Div(id='div_tess_download_alert', style={"display": "none"}),  # Alert
+            ], spinner_style={
+                "align-items": "center",
+                "justify-content": "center",
+            }, color="primary")
+        ], tab_id='tess_search_tab'),  # Search and SearchResults Tab
+        dbc.Tab(label='Plot', children=[  # The Second Tab containing the content
+            # html.Div([
+            dbc.Row([
+                dbc.Col([
+                    dbc.Label('Cutout Tools', style={'display': 'flex', 'justify-content': 'center'}),
+                    html.Details([
+                        html.Summary('Plot options', style={'font-size': label_font_size}),
+                        dbc.Stack([
+                            dbc.Label('Scale', html_for='input_tess_gamma',
+                                      style={'width': '7em', 'font-size': label_font_size}),
+                            dcc.Input(id='input_tess_gamma', inputMode='numeric', persistence=True,
+                                      value=1, type='number', style={'width': '100%'}),
+                        ], direction='horizontal', gap=2),  # Scale
+                        dbc.Checklist(options=[{'label': 'Sum', 'value': 1}], value=0, id='sum_switch',
+                                      persistence=True, switch=True,
+                                      style={'font-size': label_font_size}),  # style={'margin-left': 'auto'}),
+                    ]),
+                    dbc.Button('Plot pixel', id='replot_pixel_button', size="sm",
+                               style={
+                                   # 'marginBottom': '5px', 'marginTop': '5px',
+                                   # 'marginLeft': '2px', 'marginRight': '2px',
+                                   'width': '100%'}),
+                    html.Details([
+                        html.Summary('Mask', style={'font-size': label_font_size}),
+                        dcc.RadioItems(
+                            id='auto_mask_switch',
+                            options=[
+                                {'label': 'Auto', 'value': 1},
+                                {'label': 'Handmade', 'value': 0},
+                            ],
+                            value=1,
+                            labelStyle=switch_label_style,
+                            style={'font-size': label_font_size},
+                            persistence=True
+                        ),
+                        dbc.Collapse(
+                            dcc.RadioItems(
+                                id='mask_type_switch',
+                                options=[
+                                    {'label': 'pipe', 'value': 'pipeline'},
+                                    {'label': 'thresh', 'value': 'threshold'},
+                                ],
+                                value='threshold',
+                                labelStyle=switch_label_style,
+                                style={'font-size': label_font_size},
+                            ),
+                            id='auto_mask_collapse',
+                            is_open=True,
+                        ),  # select between pipline and threshold mask
+                        dbc.Collapse(
+                            dbc.Stack([
+                                dbc.Label('Mask thresh', html_for='thresh_input',
+                                          style={'width': '7em', 'font-size': label_font_size, 'margin-bottom': 0}),
+                                dcc.Input(id='thresh_input', inputMode='numeric', persistence=True,
+                                          value=1, type='number',
+                                          style={'width': '100%'}),
+                            ], direction='horizontal', gap=2),
+                            id='auto_mask_thresh_collapse',
+                            is_open=True,
+                        ),  # specify an auto mask threshold here
+                    ], open=True),
+                    # ], justify='between', style={'marginBottom': '5px'}),  # mask switches
+                ], md=2, sm=4, style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # tools
+                dbc.Col([
+                    dcc.Markdown(
+                        '_**Select mask and build the lightcurve**_:\n'
+                        '* Click on a star in the **Aladin** applet to mark it on the pixel image\n'
+                        '* **Handmade Mask:** Click on a pixel to set/unset mask\n'
+                        '* **Auto-mask:** Click on a pixel to create a threshold mask around it\n'
+                        '* **Pipeline mask:** Use the mask provided by the team\n',
+                        style={"font-size": 12, 'font-family': 'courier'}
+                    ),
+                ], md=3, sm=8),  # Description
+                dbc.Col([
+                    dcc.Graph(id='px_tess_graph',
+                              config={'displaylogo': False},
+                              style={'height': '250px'},  # 'margin': '0 auto'},
+                              # style={'height': '35vh'},
+                              # style={'height': '35vh'},
+                              # style={'height': '100%'},
+                              # style={'height': '100%', 'aspect-ratio': '1'},
+                              # style={'height': '45vh', 'aspect-ratio': '1'}),
+                              # style={'height': '40vh', 'aspect-ratio': '1'}
+                              ),
+                ], align='center', md=3, sm=6),  # pixel graph
+                dbc.Col([
+                    aladin_lite_react_component.AladinLiteReactComponent(
+                        id='aladin_tess',
+                        width=300,
+                        height=250,
+                        fov=round(2 * 10) / 60,  # in degrees
+                        target='02:03:54 +42:19:47',
+                        # stars=stars,
+                    ),
+                ], align='center', md=4, sm=6)  # aladin
+            ], style={'marginBottom': '10px'}),  # align='center'),  # Px graph and Aladin
+            dbc.Row([
+                dbc.Col([
+                    dbc.Label('Curve Tools', style={'display': 'flex', 'justify-content': 'center'}),
+                    dbc.Checklist(options=[{'label': 'Sub bkg', 'value': 1}], value=0,
+                                  style={'font-size': label_font_size},
+                                  id='sub_bkg_switch', persistence=True, switch=True),
+                    # html.Details([
+                    dbc.Stack([  # I separate a Label and a Switch to have tooltip when hovering the label
+                        dbc.Switch(
+                            value=False,
+                            style={'font-size': label_font_size},
+                            id='flatten_switch', persistence=False
+                        ),
+                        dbc.Label('Flatten',
+                                  id='flatten_switch_label',
+                                  style={'font-size': label_font_size}),
+                    ], direction='horizontal'),
+
+                    dbc.Collapse([
+                        dbc.Stack([
+                            dbc.Label('Display:', id='flux_trend_switch_label',
+                                      style={'margin-bottom': 0, 'font-size': label_font_size}),
+                            dcc.RadioItems(
+                                id='flux_trend_switch',
+                                options=[
+                                    {'label': 'flux', 'value': False},
+                                    {'label': 'trend', 'value': True},
+                                ],
+                                value=False,
+                                labelStyle=switch_label_style,
+                                style={'font-size': label_font_size},
+                            ),
+                        ], direction='horizontal', gap=3, style={'alignItems': 'center'}),  # flatten switch
+                        dbc.Stack([
+                            dbc.Label('flatten window', id='flatten_window_lbl', html_for='flatten_window_input',
+                                      style={'width': '7em', 'font-size': label_font_size, 'margin-bottom': 0}),
+                            dcc.Input(id='flatten_window_input', inputMode='numeric', persistence=False,
+                                      value=101, type='number', style={'width': '100%'}),
+                        ], direction='horizontal', gap=2),  # Flatten window
+                        dbc.Stack([
+                            dbc.Label('break gap', id='flatten_break_gap_lbl', html_for='flatten_break_gap_input',
+                                      style={'width': '7em', 'font-size': label_font_size, 'margin-bottom': 0}),
+                            dcc.Input(id='flatten_break_gap_input', inputMode='numeric', persistence=False,
+                                      value=5, type='number',
+                                      style={'width': '100%'}),
+                        ], direction='horizontal', gap=2),  # Flatten gap
+                        dbc.Stack([
+                            dbc.Label('order', id='flatten_order_lbl', html_for='flatten_order_input',
+                                      style={'width': '7em', 'font-size': label_font_size, 'margin-bottom': 0}),
+                            dcc.Input(id='flatten_order_input', inputMode='numeric', persistence=False,
+                                      min=1, value=2, step=1, type='number',
+                                      style={'width': '100%'}),
+                        ], direction='horizontal', gap=2),  # Flatten order
+                        # region tooltips
+                        dbc.Tooltip('Toggle to display either the flattened '
+                                    'light curve or the trend used for flattening',
+                                    target='flux_trend_switch_label', placement='bottom'),
+                        dbc.Tooltip('Switch on to remove long-term trends '
+                                    'using a Savitzky–Golay filter. Choose the parameters below',
+                                    target='flatten_switch_label', placement='bottom'),
+                        dbc.Tooltip('Length of the filter window '
+                                    '(number of data points, must be an odd positive integer). '
+                                    'Controls the smoothness of trend removal',
+                                    target='flatten_window_lbl', placement='bottom'),
+                        dbc.Tooltip('Splits the curve if time gaps exceed break_tolerance times the median gap',
+                                    target='flatten_break_gap_lbl', placement='bottom'),
+                        dbc.Tooltip('Polynomial order used to fit the samples (must be less than window length)',
+                                    target='flatten_order_lbl', placement='bottom'),
+                        # endregion
+                    ],
+                        id='flatten_collapse',
+                        is_open=True,
+                    ),
+                    dbc.Button('Plot curve', id='plot_curve_tess_button',
+                               size="sm",
+                               style={
+                                   # 'marginBottom': '5px',
+                                   'marginTop': '5px',
+                                   # 'marginLeft': '2px', 'marginRight': '2px',
+                                   'width': '100%'}),
+                    html.Details([
+                        html.Summary('Plot Options', style={'font-size': label_font_size}),
+                        dcc.RadioItems(
+                            id='star_tess_switch',
+                            options=[
+                                {'label': 'Star1', 'value': '1'},
+                                {'label': 'Star2', 'value': '2'},
+                                {'label': 'Star3', 'value': '3'},
+                            ],
+                            value='1',
+                            labelStyle=switch_label_style,
+                            style={'font-size': label_font_size},
+                        ),
+                        dcc.RadioItems(
+                            id='compare_switch',
+                            options=[
+                                {'label': 'divide', 'value': 'divide'},
+                                {'label': 'subtract', 'value': 'subtract'},
+                            ],
+                            value='divide',
+                            labelStyle=switch_label_style,
+                            style={'font-size': label_font_size},
+                        ),
+                        dbc.Button('Compare', id='plot_difference_button', size="sm",
+                                   style={'width': '100%'})
+                    ]),  # plot / compare  curves options
+                    dbc.Button('Cut out selected', id='cut_tess_button', size="sm",
+                               style={
+                                   # 'marginBottom': '5px',
+                                   'marginTop': '5px',
+                                   #  'marginLeft': '2px', 'marginRight': '2px',
+                                   'width': '100%'}),
+                    dbc.Row([
+                        dbc.Stack([
+                            dbc.Select(options=CurveDash.get_format_list(),
+                                       # handler.get_format_list(),
+                                       value=CurveDash.get_format_list()[0],
+                                       # value=handler.get_format_list()[0],
+                                       id='select_tess_format',
+                                       style={'max-width': '7em', 'font-size': label_font_size}),
+                            dbc.Button('Download', id='btn_download_tess', size="sm"),
+                        ], direction='horizontal', gap=2, style=stack_wrap_style),
+                    ], justify='between',
+                        className='gy-1',  # class adds vertical gaps between folded columns
+                        style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
+                ], lg=2, md=3, sm=4, xs=12,
+                    style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # Light Curve Tools
+                dbc.Col([
+                    html.Div(children='', id='div_tess_alert', style={'display': 'none'}),
+                    dbc.Accordion([
+                        dbc.AccordionItem([
+                            dcc.Graph(id='curve_graph_1',
+                                      figure=go.Figure().update_layout(
+                                          title='',
+                                          margin=dict(l=0, b=20, t=30, r=20),
+                                          xaxis_title=f'time',
+                                          yaxis_title=f'flux',
+                                      ),
+                                      config={'displaylogo': False},
+                                      style={'height': '40vh'}),
+                        ], title='First Light Curve', item_id='accordion_item_1'),
+                        dbc.AccordionItem([
+                            dcc.Graph(id='curve_graph_2',
+                                      figure=go.Figure().update_layout(
+                                          title='',
+                                          margin=dict(l=0, b=20, t=30, r=20),
+                                          xaxis_title=f'time',
+                                          yaxis_title=f'flux',
+                                      ),
+                                      config={'displaylogo': False},
+                                      style={'height': '40vh'}),
+                        ], title='Second Light Curve', item_id='accordion_item_2'),
+                        dbc.AccordionItem([
+                            dcc.Graph(id='curve_graph_3',
+                                      figure=go.Figure().update_layout(
+                                          title='',
+                                          margin=dict(l=0, b=20, t=30, r=20),
+                                          xaxis_title=f'time',
+                                          yaxis_title=f'flux',
+                                      ),
+                                      config={'displaylogo': False},
+                                      style={'height': '40vh'}),
+                        ], title='Third Light Curve', item_id='accordion_item_3'),
+                    ], id='accordion_tess_lc', start_collapsed=False,
+                        active_item=['accordion_item_1', 'accordion_item_2', 'accordion_item_3'],
+                        always_open=True)  # Light Curves
+                ], lg=10, md=9, sm=8, xs=12),  # Light Curves Accordion
+
+            ], style={'marginBottom': '10px'}),  # Light Curves
+        ], tab_id='tess_graph_tab', id='tess_graph_tab', disabled=True),  # Plot Tab
+    ], active_tab='tess_search_tab', id='tess_tabs', style={'marginBottom': '5px'}),
+    dcc.Store(id='store_search_result'),  # things showed in the data table (the list of TESS sectors etc.)
+    dcc.Store(id='store_pixel_metadata'),  # stuff for recreation the current pixel
+    dcc.Store(id='mask_store'),  # mask for lightcurve calculation from cutouts
+    dcc.Store(id='mask_slow_store'),  # for more complex mask operation, performed on the server side
+    dcc.Store(id='mask_fast_store'),  # mask changed on client side
+    dcc.Store(id='wcs_store'),  # store wcs to sync with Aladin applet
+    dcc.Store(id='store_tess_cutout_lightcurve'),  # user's lightcurve is here
+    # dcc.Store(id='store_tess_cutout_curve_metadata'),   # lightcurve related metadata: Name, Sector, etc.
+    dcc.Store(id='lc2_store'),  # the second lightcurve is here
+    dcc.Store(id='lc3_store'),  # the third lightcurve is here
+    dcc.Download(id='download_tess_lightcurve'),
+], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
+
+if not DISK_CACHE and __name__ == '__main__':  # local version without diskcache
+    background_callback = False
+else:
+    background_callback = True
 
 
 # Auxiliary
@@ -37,36 +428,15 @@ def normalize(arr):
     return (arr - arr.min()) / (arr.max() - arr.min())
 
 
-def log_gamma(data, gamma=0.9, log=True):
-    """
-    Gamma correction to enhance dark regions
-    :param log: disable if False
-    :param data:
-    :param gamma: Adjust gamma to control the contrast in dark regions
-    :return:
-    """
-    if not log:
-        return data
-    # data = normalize(data)
-    # log_data = normalize(np.log1p(data))
-    log_data = np.log1p(data)
-    # return normalize(np.power(log_data, gamma))
-    return np.power(log_data, gamma)
-
-
-# app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
-
-switch_label_style = {'display': 'inline-block', 'padding': '5px'}  # In the row, otherwise 'block'
-# switch_label_style = {'display': 'block', 'padding': '2px'}  # In the row, otherwise 'block'
-label_font_size = '0.8em'
-stack_wrap_style = {'marginBottom': '5px', 'flexWrap': 'wrap'}
-
-
 def imshow_logscale(img, scale_method=None, show_colorbar=False, gamma=0.99, **kwargs):
     # from engineering_notation import EngNumber
     import matplotlib.ticker as ticker
 
-    img_true_min = img[img > 0].min()
+    # img_true_min = img[img > 0].min()   # todo: return try here
+    try:
+        img_true_min = img[img > 0].min()
+    except ValueError:
+        img_true_min = 0
     if scale_method:
         img[img <= 0] = img_true_min
         log_data = scale_method(img, gamma=gamma)
@@ -109,371 +479,6 @@ def imshow_logscale(img, scale_method=None, show_colorbar=False, gamma=0.99, **k
     fig.data[0]['customdata'] = img  # store here not-logarithmic values
     fig.data[0]['hovertemplate'] = '%{customdata:.0f}<extra></extra>'
     return fig
-
-
-def layout():
-    return dbc.Container([
-        html.H1('TESS Cutout Tool', className="text-primary text-left fs-3"),
-        dbc.Tabs([
-            dbc.Tab(label='Search Sector', children=[
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Stack([
-                            dbc.Label('Object', html_for='obj_name_tess_input', style={'width': '7em'}),
-                            dcc.Input(id='obj_name_tess_input', persistence=True, type='text', style={'width': '100%'}),
-                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                        dbc.Stack([
-                            dbc.Label('RA', html_for='ra_input', style={'width': '7em'}),
-                            dcc.Input(id='ra_tess_input', persistence=True, type='text', style={'width': '100%'}),
-                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                        dbc.Stack([
-                            dbc.Label('DEC', html_for='dec_tess_input', style={'width': '7em'}),
-                            dcc.Input(id='dec_tess_input', persistence=True, type='text', style={'width': '100%'}),
-                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                        dbc.Stack([
-                            dbc.Label('Radius', id='radius_tess_lbl', html_for='radius_tess_input',
-                                      style={'width': '7em'}),
-                            dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
-                                      style={'width': '100%'}),
-                            dbc.Tooltip('Search radius in arcseconds', target='radius_tess_lbl', placement='bottom'),
-                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                        dbc.Stack([
-                            dbc.Button('Search', id='search_tess_button', size='sm'),
-                            dbc.Button('Cancel', id='cancel_search_tess_button', size='sm', disabled=True),
-                        ], direction='horizontal', gap=2, style=stack_wrap_style),
-                        dcc.RadioItems(
-                            id='ffi_tpf_switch',
-                            options=[
-                                {'label': 'FFI', 'value': 'ffi'},
-                                {'label': 'TPF', 'value': 'tpf'}
-                            ],
-                            value='tpf',
-                            labelStyle={'display': 'inline-block', 'padding': '5px'}),
-                    ], lg=2, md=3, sm=4, xs=12,
-                        style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # SearchTools
-                    dbc.Col([
-                        dbc.Spinner(children=[
-                            html.Div([
-                                dbc.Row([
-                                    dbc.Col([
-                                        html.H3("Search results", id="table_tess_header"),
-                                    ], md=6, sm=12),
-                                    dbc.Col([
-                                        dbc.Stack([
-                                            dbc.Label('Size', html_for='size_ffi_input', style={'width': '7em'}),
-                                            dcc.Input(id='size_ffi_input', persistence=True, type='number', min=1,
-                                                      value=11,
-                                                      style={'width': '100%'}),
-                                            dbc.Button('Download sector', id='download_sector_button', size="sm",
-                                                       style={'width': '100%'}),
-                                            dbc.Button('Cancel', id='cancel_download_sector_button', size="sm",
-                                                       style={'width': '100%'}),
-                                        ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                                    ], md=6, sm=12),
-                                ]),
-                                dbc.Row([
-                                    DataTable(
-                                        id="data_tess_table",
-                                        columns=[{"name": col, "id": col} for col in
-                                                 ["#", "mission", "year", "author", "exptime", "target", "distance"]],
-                                        data=[],
-                                        row_selectable="single",
-                                        fixed_rows={'headers': True},  # Freeze the header
-                                        style_table={
-                                            'maxHeight': '30vh',
-                                            'overflowY': 'auto',  # vertical scrolling
-                                            'overflowX': 'auto',  # horizontal scrolling
-                                        },
-                                        page_action="native", sort_action="native",
-                                        style_cell={"font-size": 14, 'textAlign': 'left'},
-                                        cell_selectable=False,
-                                        style_header={"font-size": 14, 'font-family': 'courier',
-                                                      'color': '#000',
-                                                      'backgroundColor': 'var(--bs-light)',
-                                                      'textAlign': 'left'},
-                                    )
-                                ]),
-                            ], id="search_results_row", style={"display": "none"}),  # Search results
-                            html.Div(id='div_tess_search_alert', style={"display": "none"}),  # Alert
-                        ]),
-                    ], lg=10, md=9, sm=8, xs=12),
-                ], style={'marginBottom': '10px'}),  # Search and SearchResults
-                dbc.Spinner(children=[
-                    dbc.Label(id="download_sector_result", children='',
-                              style={"color": "green", "text-align": "center"}),
-                    html.Div(id='div_tess_download_alert', style={"display": "none"}),  # Alert
-                ], spinner_style={
-                    "align-items": "center",
-                    "justify-content": "center",
-                }, color="primary")
-            ], tab_id='tess_search_tab'),  # Search and SearchResults Tab
-            dbc.Tab(label='Plot', children=[  # The Second Tab containing the content
-                # html.Div([
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Row(dbc.Col(dbc.Label('Cutout Tools'),
-                                        style={'display': 'flex', 'justify-content': 'center'})),
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Stack([
-                                    dbc.Label('Scale', html_for='input_tess_gamma',
-                                              style={'width': '7em', 'font-size': label_font_size}),
-                                    dcc.Input(id='input_tess_gamma', inputMode='numeric', persistence=True,
-                                              value=1, type='number', style={'width': '100%'}),
-                                ], direction='horizontal', gap=2),  # Scale and Sum
-                            ], width='auto'),
-
-                        ], justify="between", style={'marginBottom': '5px'}, ),  # Visualization switches
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Checklist(options=[{'label': 'Sum', 'value': 1}], value=0, id='sum_switch',
-                                              persistence=True, switch=True,
-                                              style={'font-size': label_font_size}),  # style={'margin-left': 'auto'}),
-                            ], width='auto'),
-                            dbc.Col(dbc.Button('Plot pixel', id='replot_pixel_button', size="sm",
-                                               style={'width': '100%'}), width='auto'),
-                        ], justify="between", style={'marginBottom': '10px'}),  # plot button
-                        # dbc.Row([
-                        #     dbc.Label('Mask', style={"textAlign": "center"}),
-                        # ]),  # style={'marginBottom': '5px'}),  # Mask label
-                        dbc.Row([
-                            dbc.Col([
-                                dbc.Stack([
-                                    dbc.Label('Mask thresh', html_for='thresh_input',
-                                              style={'width': '7em', 'font-size': label_font_size}),
-                                    dcc.Input(id='thresh_input', inputMode='numeric', persistence=True,
-                                              value=1, type='number',
-                                              style={'width': '100%'}),
-                                ], direction='horizontal', gap=2),  # Sc
-                            ], width='auto'),  # Mask Threshold
-                            dbc.Col([
-                                dbc.Checklist(options=[{'label': 'Auto mask', 'value': 1}], value=0,
-                                              id='auto_mask_switch',
-                                              style={'font-size': label_font_size},
-                                              persistence=True, switch=True),
-
-                                dcc.RadioItems(
-                                    id='mask_switch',
-                                    options=[
-                                        {'label': 'pipe', 'value': 'pipeline'},
-                                        {'label': 'thresh', 'value': 'threshold'},
-                                    ],
-                                    value='threshold',
-                                    labelStyle=switch_label_style,
-                                    style={'font-size': label_font_size},
-                                ),
-                            ], width='auto'),  # Mask switches
-                        ], justify='between', style={'marginBottom': '5px'}),  # mask switches
-                    ], md=2, sm=4, style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # tools
-                    dbc.Col([
-                        dcc.Markdown(
-                            '_**Select mask and build the lightcurve**_:\n'
-                            '* Click on a star in the **Aladin** applet to mark it on the pixel image\n'
-                            '* **Handmade Mask:** Click on a pixel to set/unset mask\n'
-                            '* **Auto-mask:** Click on a pixel to create a threshold mask around it\n'
-                            '* **Pipeline mask:** Use the mask provided by the team\n'
-                            '* **Flux/Cent X/Y:** View its time dependence\n'
-                            '* **Flatten:** Not functional yet\n',
-                            style={"font-size": 12, 'font-family': 'courier'}
-                        ),
-                    ], md=3, sm=8),  # Description
-                    dbc.Col([
-                        dcc.Graph(id='px_tess_graph',
-                                  config={'displaylogo': False},
-                                  style={'height': '250px'},  # 'margin': '0 auto'},
-                                  # style={'height': '35vh'},
-                                  # style={'height': '35vh'},
-                                  # style={'height': '100%'},
-                                  # style={'height': '100%', 'aspect-ratio': '1'},
-                                  # style={'height': '45vh', 'aspect-ratio': '1'}),
-                                  # style={'height': '40vh', 'aspect-ratio': '1'}
-                                  ),
-                    ], align='center', md=3, sm=6),  # pixel graph
-                    dbc.Col([
-                        aladin_lite_react_component.AladinLiteReactComponent(
-                            id='aladin_tess',
-                            width=300,
-                            height=250,
-                            fov=round(2 * 10) / 60,  # in degrees
-                            target='02:03:54 +42:19:47',
-                            # stars=stars,
-                        ),
-                    ], align='center', md=4, sm=6)  # aladin
-                ], style={'marginBottom': '10px'}),  # align='center'),  # Px graph and Aladin
-                dbc.Row([
-                    dbc.Col([
-                        dbc.Row(dbc.Col(dbc.Label('Curve Tools'),
-                                        style={'display': 'flex', 'justify-content': 'center'})),
-                        dbc.Checklist(options=[{'label': 'Sub bkg', 'value': 1}], value=0,
-                                      style={'font-size': label_font_size},
-                                      id='sub_bkg_switch', persistence=True, switch=True),
-                        html.Details([
-                            html.Summary('Flatten'),
-                            dbc.Row([
-                                dbc.Col([
-                                    dbc.Switch(label='Flatten', value=False,
-                                               style={'font-size': label_font_size},
-                                               id='flatten_switch', persistence=False),
-                                ], width='auto'),  # flatten switch
-                                dbc.Col([
-                                    dcc.RadioItems(
-                                        id='flux_trend_switch',
-                                        options=[
-                                            {'label': 'flux', 'value': False},
-                                            {'label': 'trend', 'value': True},
-                                        ],
-                                        value=False,
-                                        labelStyle=switch_label_style,
-                                        style={'font-size': label_font_size},
-                                    ),
-                                ], width='auto'),  # flux / trend switch
-                            ]),  # flatten switch and flux / trend switch
-                            dbc.Stack([
-                                dbc.Label('flatten window', id='flatten_window_lbl', html_for='flatten_window_input',
-                                          style={'width': '7em', 'font-size': label_font_size}),
-                                dcc.Input(id='flatten_window_input', inputMode='numeric', persistence=False,
-                                          value=101, type='number', style={'width': '100%'}),
-                            ], direction='horizontal', gap=2),  # Flatten window
-                            dbc.Stack([
-                                dbc.Label('break gap', id='flatten_break_gap_lbl', html_for='flatten_break_gap_input',
-                                          style={'width': '7em', 'font-size': label_font_size}),
-                                dcc.Input(id='flatten_break_gap_input', inputMode='numeric', persistence=False,
-                                          value=5, type='number',
-                                          style={'width': '100%'}),
-                            ], direction='horizontal', gap=2),  # Flatten gap
-                            dbc.Stack([
-                                dbc.Label('order', id='flatten_order_lbl', html_for='flatten_order_input',
-                                          style={'width': '7em', 'font-size': label_font_size}),
-                                dcc.Input(id='flatten_order_input', inputMode='numeric', persistence=False,
-                                          min=1, value=2, step=1, type='number',
-                                          style={'width': '100%'}),
-                            ], direction='horizontal', gap=2),  # Flatten order
-                            # region tooltips
-                            dbc.Tooltip('Toggle to display either the flattened '
-                                        'light curve or the trend used for flattening',
-                                        target='flux_trend_switch', placement='bottom'),
-                            dbc.Tooltip('Switch on to remove long-term trends '
-                                        'using a Savitzky–Golay filter. Choose the parameters below',
-                                        target='flatten_switch', placement='bottom'),
-                            dbc.Tooltip('Length of the filter window '
-                                        '(number of data points, must be an odd positive integer). '
-                                        'Controls the smoothness of trend removal',
-                                        target='flatten_window_lbl', placement='bottom'),
-                            dbc.Tooltip('Splits the curve if time gaps exceed break_tolerance times the median gap',
-                                        target='flatten_break_gap_lbl', placement='bottom'),
-                            dbc.Tooltip('Polynomial order used to fit the samples (must be less than window length)',
-                                        target='flatten_order_lbl', placement='bottom'),
-                            # endregion
-                        ]),
-                        dbc.Row([
-                            dbc.Button('Plot curve', id='plot_curve_tess_button', size="sm"),
-                        ], style={'marginBottom': '5px', 'marginTop': '5px',
-                                  'marginLeft': '2px', 'marginRight': '2px'}),
-                        html.Details([
-                            html.Summary('Plot Options'),
-                            dcc.RadioItems(
-                                id='star_tess_switch',
-                                options=[
-                                    {'label': 'Star1', 'value': '1'},
-                                    {'label': 'Star2', 'value': '2'},
-                                    {'label': 'Star3', 'value': '3'},
-                                ],
-                                value='1',
-                                labelStyle=switch_label_style,
-                                style={'font-size': label_font_size},
-                            ),
-                            dcc.RadioItems(
-                                id='compare_switch',
-                                options=[
-                                    {'label': 'divide', 'value': 'divide'},
-                                    {'label': 'subtract', 'value': 'subtract'},
-                                ],
-                                value='divide',
-                                labelStyle=switch_label_style,
-                                style={'font-size': label_font_size},
-                            ),
-                            dbc.Button('Compare', id='plot_difference_button', size="sm")
-                        ]),  # plot / compare  curves options
-                        dbc.Row([dbc.Label('Selection:')]),
-                        dbc.Row([
-                            dbc.Stack([
-                                dbc.Button('Cut out', id='cut_tess_button', size="sm"),
-                                dbc.Button('Keep', id='keep_tess_button', size="sm")
-                            ], direction='horizontal', gap=2, style=stack_wrap_style),
-                        ], justify='between',
-                            className='gy-1',
-                            style={'marginBottom': '5px'}),  # selection actions
-                        dbc.Row([
-                            dbc.Stack([
-                                dbc.Select(options=CurveDash.get_format_list(),
-                                           # handler.get_format_list(),
-                                           value=CurveDash.get_format_list()[0],
-                                           # value=handler.get_format_list()[0],
-                                           id='select_tess_format',
-                                           style={'max-width': '7em', 'font-size': label_font_size}),
-                                dbc.Button('Download', id='btn_download_tess', size="sm"),
-                            ], direction='horizontal', gap=2, style=stack_wrap_style),
-                        ], justify='between',
-                            className='gy-1',  # class adds vertical gaps between folded columns
-                            style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
-                    ], lg=2, md=3, sm=4, xs=12,
-                        style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # Light Curve Tools
-                    dbc.Col([
-                        html.Div(children='', id='div_tess_alert', style={'display': 'none'}),
-                        dbc.Accordion([
-                            dbc.AccordionItem([
-                                dcc.Graph(id='curve_graph_1',
-                                          figure=go.Figure().update_layout(
-                                              title='',
-                                              margin=dict(l=0, b=20, t=30, r=20),
-                                              xaxis_title=f'time',
-                                              yaxis_title=f'flux',
-                                          ),
-                                          config={'displaylogo': False},
-                                          style={'height': '40vh'}),
-                            ], title='First Light Curve', item_id='accordion_item_1'),
-                            dbc.AccordionItem([
-                                dcc.Graph(id='curve_graph_2',
-                                          figure=go.Figure().update_layout(
-                                              title='',
-                                              margin=dict(l=0, b=20, t=30, r=20),
-                                              xaxis_title=f'time',
-                                              yaxis_title=f'flux',
-                                          ),
-                                          config={'displaylogo': False},
-                                          style={'height': '40vh'}),
-                            ], title='Second Light Curve', item_id='accordion_item_2'),
-                            dbc.AccordionItem([
-                                dcc.Graph(id='curve_graph_3',
-                                          figure=go.Figure().update_layout(
-                                              title='',
-                                              margin=dict(l=0, b=20, t=30, r=20),
-                                              xaxis_title=f'time',
-                                              yaxis_title=f'flux',
-                                          ),
-                                          config={'displaylogo': False},
-                                          style={'height': '40vh'}),
-                            ], title='Third Light Curve', item_id='accordion_item_3'),
-                        ], id='accordion_tess_lc', start_collapsed=False,
-                            active_item=['accordion_item_1', 'accordion_item_2', 'accordion_item_3'],
-                            always_open=True)  # Light Curves
-                    ], lg=10, md=9, sm=8, xs=12),  # Light Curves Accordion
-
-                ], style={'marginBottom': '10px'}),  # Light Curves
-            ], tab_id='tess_graph_tab', id='tess_graph_tab', disabled=True),  # Plot Tab
-        ], active_tab='tess_search_tab', id='tess_tabs', style={'marginBottom': '5px'}),
-        dcc.Store(id='store_search_result'),  # things showed in the data table (the list of TESS sectors etc.)
-        dcc.Store(id='store_pixel_metadata'),  # stuff for recreation the current pixel
-        dcc.Store(id='mask_store'),  # mask for lightcurve calculation from cutouts
-        dcc.Store(id='mask_slow_store'),  # for more complex mask operation, performed on the server side
-        dcc.Store(id='mask_fast_store'),  # mask changed on client side
-        dcc.Store(id='wcs_store'),  # store wcs to sync with Aladin applet
-        dcc.Store(id='store_tess_cutout_lightcurve'),  # user's lightcurve is here
-        # dcc.Store(id='store_tess_cutout_curve_metadata'),   # lightcurve related metadata: Name, Sector, etc.
-        dcc.Store(id='lc2_store'),  # the second lightcurve is here
-        dcc.Store(id='lc3_store'),  # the third lightcurve is here
-        dcc.Download(id='download_tess_lightcurve'),
-    ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
 
 
 def create_shapes(target_mask):
@@ -562,6 +567,7 @@ def parse_table_data(selected_rows, table_data):
         pixel_metadata=Output('store_pixel_metadata', 'data'),
         wcs=Output('wcs_store', 'data', allow_duplicate=True),
         aladin_target=Output('aladin_tess', 'target'),
+        px_graph=Output('px_tess_graph', 'figure', allow_duplicate=True),
         sector_results=Output('download_sector_result', 'children'),
         graph_tab_disabled=Output('tess_graph_tab', 'disabled'),
         active_tab=Output('tess_tabs', 'active_tab'),
@@ -586,7 +592,7 @@ def parse_table_data(selected_rows, table_data):
     running=[(Output('download_sector_button', 'disabled'), True, False),
              (Output('cancel_download_sector_button', 'disabled'), False, True)],
     cancel=[Input('cancel_download_sector_button', 'n_clicks')],
-    background=True,
+    background=background_callback,
     prevent_initial_call=True
 )
 def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
@@ -595,7 +601,7 @@ def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
     if n_clicks is None:
         raise PreventUpdate
     output_keys = list(ctx.outputs_grouping.keys())
-    output = {key: dash.no_update for key in output_keys}
+    output = {key: no_update for key in output_keys}
     try:
         search_result_di = pixel_di.get('search_result', None)
         pixel_metadata, pixel_data = download_selected_pixel(selected_rows, table_data, search_result_di, size)
@@ -612,6 +618,7 @@ def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
         #     raise PipeException('My test cutout selected first row Exception')  # todo remove it
         output['wcs'] = dict(pixel_data.wcs.to_header())
         output['pixel_metadata'] = pixel_metadata
+        output['px_graph'] = go.Figure()  # clean the widget
         output['aladin_target'] = f'{pixel_data.ra} {pixel_data.dec}'
         output['sector_results'] = 'Success. Switch to the next Tab'
         output['graph_tab_disabled'] = False
@@ -633,6 +640,31 @@ def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
 
 
 @callback(
+    Output('auto_mask_collapse', 'is_open'),
+    Input('auto_mask_switch', 'value')
+)
+def toggle_auto_mask_collapse(auto_mask):
+    return auto_mask == 1  # == auto
+
+
+@callback(
+    Output('auto_mask_thresh_collapse', 'is_open'),
+    Input('mask_type_switch', 'value'),
+    Input('auto_mask_switch', 'value')
+)
+def toggle_auto_mask_thresh_collapse(mask_type, auto_mask_switch_value):
+    return auto_mask_switch_value == 1 and mask_type == 'threshold'  # == auto
+
+
+@callback(
+    Output('flatten_collapse', 'is_open'),
+    Input('flatten_switch', 'value')
+)
+def toggle_flatten_collapse(flatten_switch):
+    return flatten_switch  # == flatten is on
+
+
+@callback(
     [Output('px_tess_graph', 'figure', allow_duplicate=True),
      Output('mask_store', 'data', allow_duplicate=True)],
     [Input('replot_pixel_button', 'n_clicks'),
@@ -640,7 +672,7 @@ def download_sector(n_clicks, selected_rows, table_data, pixel_di, size):
      State('input_tess_gamma', 'value'),
      State('thresh_input', 'value'),
      State('sum_switch', 'value'),
-     State('mask_switch', 'value'),
+     State('mask_type_switch', 'value'),
      State('auto_mask_switch', 'value')],
     prevent_initial_call=True
 )
@@ -780,7 +812,7 @@ clientside_callback(
     [Input("px_tess_graph", "clickData"),
      State("px_tess_graph", "figure"),
      State('store_pixel_metadata', 'data'),
-     State('mask_switch', 'value'),
+     State('mask_type_switch', 'value'),
      State('auto_mask_switch', 'value'),
      State('thresh_input', 'value')],
     prevent_initial_call=True,
@@ -796,7 +828,7 @@ def create_mask(clickData, fig, pixel_metadata,
     x = int(clickData['points'][0]['x'])
     y = int(clickData['points'][0]['y'])
 
-    # aladin_target = dash.no_update
+    # aladin_target = no_update
     if mask_type == 'pipeline':
         mask = np.array(pixel_metadata['pipeline_mask'])
     else:
@@ -917,19 +949,6 @@ def create_lightcurve_figure(js_lightcurve: str | None):
     yaxis_title = f'flux {safe_none(lcd.flux_correction)}, {safe_none(lcd.flux_unit)}'
 
     title = lcd.title
-    # if lc_metadata:
-    #     # title = (f'{lc_metadata.get("pixel_type", "").upper()} '
-    #     #          # f'target={lc_metadata.get("target", "")} label={lc_metadata.get("label", "")} '
-    #     #          f'{lc_metadata.get("target", "")} '
-    #     #          f'sector:{lc_metadata.get("sector", "")} '
-    #     #          f'{lc_metadata.get("author", "")}')
-    #     title = (f'{lc_metadata.get("pixel_type", "").upper()} '
-    #              f'{lc_metadata.get("lookup_name", "")} '
-    #              f'{lc_metadata.get("target", "")} '
-    #              f'sector:{lc_metadata.get("sector", "")} '
-    #              f'{lc_metadata.get("author", "")}')
-    # else:
-    #     title = ''
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=lcd.jd, y=lcd.flux,
@@ -950,7 +969,7 @@ def create_lightcurve_figure(js_lightcurve: str | None):
 @callback(
     # region parameters
     output=dict(
-        lc1=Output('store_tess_cutout_lightcurve', 'data'),  # todo make it an Input also
+        lc1=Output('store_tess_cutout_lightcurve', 'data', allow_duplicate=True),  # todo make it an Input also
         lc2=Output('lc2_store', 'data'),
         lc3=Output('lc3_store', 'data'),
         # lc_metadata=Output('store_tess_cutout_curve_metadata', 'data'),
@@ -976,7 +995,7 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
         raise PreventUpdate
 
     output_keys = list(ctx.outputs_grouping.keys())
-    output = {key: dash.no_update for key in output_keys}
+    output = {key: no_update for key in output_keys}
 
     try:
         path_to_pixel_data = pixel_metadata['path']
@@ -1027,9 +1046,14 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
                 flux = trend.flux
                 flux_correction.append('Trend')
             else:
-                flux = lc.flatten(window_length=flatten_window,
-                                  break_tolerance=flatten_break_gap,
-                                  polyorder=flatten_order).flux
+                # flux = lc.flatten(window_length=flatten_window,
+                #                   break_tolerance=flatten_break_gap,
+                #                   polyorder=flatten_order).flux
+                lc_flattened = lc.flatten(window_length=flatten_window,
+                                          break_tolerance=flatten_break_gap,
+                                          polyorder=flatten_order)
+                flux = lc_flattened.flux
+                flux_err = lc_flattened.flux_err
             # flux = lc.flux / trend.flux
             # flux = trend.flux
             # flux = corrected_lc.flux
@@ -1105,7 +1129,7 @@ def plot_lightcurve(lc1, lc2, lc3):
 
     # output_keys = ['fig1', 'fig2', 'fig3']
     output_keys = list(ctx.outputs_grouping.keys())
-    output = {key: dash.no_update for key in output_keys}
+    output = {key: no_update for key in output_keys}
     active_item = ['accordion_item_1']
 
     try:
@@ -1141,7 +1165,7 @@ def plot_lightcurve(lc1, lc2, lc3):
 def plot_difference(n_clicks, jsons_1, jsons_2, comparison_method):
     if n_clicks is None:
         raise PreventUpdate
-    fig = dash.no_update
+    fig = no_update
     try:
         if jsons_1 is None or jsons_2 is None:
             raise PipeException('Plot both: the First and Second Light Curves first')
@@ -1273,7 +1297,7 @@ def mark_star(coord, fig, wcs_dict):
              (Output('download_sector_result', 'children'),
               'I\'m working... Please wait', 'Press Download to get the lightcurve')],
     cancel=[Input('cancel_search_tess_button', 'n_clicks')],
-    background=True,
+    background=background_callback,
     prevent_initial_call=True
 )
 def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
@@ -1287,7 +1311,7 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
         raise PreventUpdate
 
     output_keys = list(ctx.outputs_grouping.keys())
-    output = {key: dash.no_update for key in output_keys}
+    output = {key: no_update for key in output_keys}
 
     # set_props('download_sector_result', {'children': 'I\'m working... Please wait'})
     if obj_name:
@@ -1342,10 +1366,12 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
           State('store_tess_cutout_lightcurve', 'data'),
           # State('store_tess_cutout_curve_metadata', 'data'),
           State('select_tess_format', 'value'),
+          State('curve_graph_1', 'relayoutData'),
           prevent_initial_call=True)
-def download_tess_lightcurve(n_clicks, js_lightcurve, table_format):
+def download_tess_lightcurve(n_clicks, js_lightcurve, table_format, relayout_data):
     """
-    Downloads the light curve to user's computer
+    Downloads the light curve to the user's computer, storing only 'what I see on the screen',
+    so the zoom action cuts out a light curve piece along the time axis.
     Add metadata to the Table.metadata
     """
     if not n_clicks:
@@ -1354,6 +1380,11 @@ def download_tess_lightcurve(n_clicks, js_lightcurve, table_format):
         raise PreventUpdate
     try:
         lcd = CurveDash.from_serialized(js_lightcurve)
+        # Cut out the light curve, bound it by the visible area along a time axis:
+        if relayout_data and 'xaxis.range[0]' in relayout_data and 'xaxis.range[1]' in relayout_data:
+            left_border = relayout_data['xaxis.range[0]']
+            right_border = relayout_data['xaxis.range[1]']
+            lcd.keep(left_border, right_border)
         # bstring is "bytes"
         file_bstring = lcd.download(table_format)  # todo: here add table metadata with the lookup name
 
@@ -1369,24 +1400,26 @@ def download_tess_lightcurve(n_clicks, js_lightcurve, table_format):
         logging.warning(f'tess_cutout.download_tess_lightcurve: {e}')
         alert_message = message.warning_alert(e)
         set_props('div_tess_alert', {'children': alert_message, 'style': {'display': 'block'}})
-        ret = dash.no_update
+        ret = no_update
 
     return ret
 
 
 @callback(Output('store_tess_cutout_lightcurve', 'data', allow_duplicate=True),
           [Input('cut_tess_button', 'n_clicks'),
-           Input('keep_tess_button', 'n_clicks'),
+           # Input('keep_tess_button', 'n_clicks'),
            State('curve_graph_1', 'selectedData'),
            State('store_tess_cutout_lightcurve', 'data')],
           prevent_initial_call=True,
           )
-def handle_selection(_1, _2, selected_data, js_lightcurve):
+# def handle_selection(_1, _2, selected_data, js_lightcurve):
+def handle_selection(_1, selected_data, js_lightcurve):
     """
     Remove a selected piece of lightcurve
     Can be applied only to lightcurve 1
     """
-    if _1 is None and _2 is None:
+    # if _1 is None and _2 is None:
+    if _1 is None:
         raise PreventUpdate
     if selected_data is None or js_lightcurve is None:
         raise PreventUpdate
@@ -1397,14 +1430,88 @@ def handle_selection(_1, _2, selected_data, js_lightcurve):
     left_border, right_border = selected_data['range']['x']
     try:
         lcd = CurveDash.from_serialized(js_lightcurve)
-        if ctx.triggered_id == 'cut_tess_button':
-            lcd.cut(left_border, right_border)
-        else:
-            lcd.keep(left_border, right_border)
+        lcd.cut(left_border, right_border)
+        # if ctx.triggered_id == 'cut_tess_button':
+        #     lcd.cut(left_border, right_border)
+        # else:
+        #     lcd.keep(left_border, right_border)
         set_props('div_tess_alert', {'children': '', 'style': {'display': 'none'}})
         return lcd.serialize()
     except Exception as e:
         logging.warning(f'tess_cutout.handle_selection: {e}')
         alert_message = message.warning_alert(e)
         set_props('div_tess_alert', {'children': alert_message, 'style': {'display': 'block'}})
-        return dash.no_update  # If I raise PreventUpdate here, set_props will not really set props; I
+        return no_update  # If I raise PreventUpdate here, set_props will not really set props; I
+
+
+# @callback(
+#     Output('store_tess_cutout_lightcurve', 'data', allow_duplicate=True),
+#     [
+#     # Input('cut_tess_button', 'n_clicks'),
+#      Input('keep_tess_button', 'n_clicks'),
+#      State('curve_graph_1', 'relayoutData'),
+#      State('store_tess_cutout_lightcurve', 'data')],
+#     prevent_initial_call=True,
+# )
+# def handle_zoom_123(_1, relayout_data, js_lightcurve):
+#     """
+#     Remove a selected piece of lightcurve
+#     Can be applied only to lightcurve 1
+#     """
+#     if _1 is None:
+#         raise PreventUpdate
+#     if relayout_data is None or js_lightcurve is None:
+#         raise PreventUpdate
+#     if 'xaxis.range[0]' in relayout_data and 'xaxis.range[1]' in relayout_data:
+#         left_border = relayout_data['xaxis.range[0]']
+#         right_border = relayout_data['xaxis.range[1]']
+#         print(f'relayout_data in zoom: {left_border=} {right_border=}')
+#     else:
+#         raise PreventUpdate
+#     try:
+#         lcd = CurveDash.from_serialized(js_lightcurve)
+#         if ctx.triggered_id == 'cut_tess_button':
+#             lcd.cut(left_border, right_border)
+#         else:
+#             lcd.keep(left_border, right_border)
+#         set_props('div_tess_alert', {'children': '', 'style': {'display': 'none'}})
+#         return lcd.serialize()
+#     except Exception as e:
+#         logging.warning(f'tess_cutout.handle_selection: {e}')
+#         alert_message = message.warning_alert(e)
+#         set_props('div_tess_alert', {'children': alert_message, 'style': {'display': 'block'}})
+#         return no_update  # If I raise PreventUpdate here, set_props will not really set props; I
+
+
+if __name__ == '__main__':  # So this is a local version
+    from dash import Dash
+
+    if DISK_CACHE:
+        # Background callback management:
+        import diskcache
+        from dash import DiskcacheManager
+        from pathlib import Path
+
+        diskcache_dir = Path('diskcache')
+        diskcache_dir.mkdir(exist_ok=True)
+        background_callback_manager = DiskcacheManager(diskcache.Cache(diskcache_dir.name))
+    else:
+        background_callback_manager = None
+
+    app = Dash(__name__,
+               background_callback_manager=background_callback_manager,
+               external_stylesheets=[dbc.themes.BOOTSTRAP])
+
+    app.layout = page_layout
+    app.run_server(debug=True, port=8050)
+else:
+    # background_callback = True
+    register_page(__name__, name='TESS cutout',
+                  order=3,
+                  path='/igebc/tess',
+                  title='TESS cutout Tool',
+                  in_navbar=True)
+
+
+    def layout():
+        return page_layout

@@ -28,16 +28,17 @@ def load_cone(coord_str: str, radius: str, catalogue):
     df, tooltips = request_gaia.request_coord_cone(coord_str, radius, catalogue)
     # f-string doesn't work here. But why???
     df['Identifier'] = ('[' + df["Identifier"] + '](/igebc/star?source_id=' + df["gaia_id"] +
-                        '&catalogue=' + df['catalogue'] + ')')
+                        # '&catalogue=' + df['catalogue'] +
+                        ')')
     # Select and rearrange columns in a user-friendly manner:
     columns = ['Identifier', 'RA DEC', 'Mag G', 'dist']
     return df[columns], tooltips
 
 
 @timeit
-def layout(coords='0 0', radius='10', catalogue='Gaia'):
+def layout(coords='0 0', radius='10'):
     try:
-        df, tooltips = load_cone(coords, radius, catalogue)
+        df, tooltips = load_cone(coords, radius, catalogue='Gaia')
         table_coord = table_with_link(df=df, tooltips=tooltips, ident='table_query_coords', numeric_columns={'Mag G': 2, 'dist': 1})
         df[['ra', 'dec']] = df['RA DEC'].str.split(' ', expand=True)
         df['ra'] = Angle(df['ra'].values, unit=hourangle).deg

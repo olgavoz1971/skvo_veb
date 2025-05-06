@@ -6,7 +6,22 @@ from astropy.coordinates import SkyCoord
 
 
 def sanitize_filename(name: str) -> str:
-    return re.sub(r'[<>:"/\\|?* ]', '_', name)
+    return re.sub(r'[<>:"/\\|?*, ]', '_', name)
+
+
+def log_gamma(data, gamma=0.9, log=True):
+    """
+    Gamma correction to enhance dark regions
+    :param log: disable if False
+    :param data:
+    :param gamma: Adjust gamma to control the contrast in dark regions
+    :return:
+    """
+    if not log:
+        return data
+    from numpy import log1p, power
+    log_data = log1p(data)
+    return power(log_data, gamma)
 
 
 def safe_none(value):

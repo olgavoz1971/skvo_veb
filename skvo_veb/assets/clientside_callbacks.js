@@ -34,7 +34,12 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 // Based on the folded_view status, determine which column to use for the x-axis.
                 let xColIndex;
                 let newX, xaxis_title
-                const yaxis_title = `flux, ${lightcurve.hasOwnProperty('flux_unit') ? lightcurve.flux_unit : ''}`;
+//                console.log('plotLightcurveFromStore: lightcurve', lightcurve)
+//                console.log('plotLightcurveFromStore: metadata', metadata)
+//                console.log('plotLightcurveFromStore: metadata.flux_unit', metadata.flux_unit)
+//                console.log('plotLightcurveFromStore', lightcurve.hasOwnProperty('flux_unit'), lightcurve.flux_unit)
+//                const yaxis_title = `flux, ${lightcurve.hasOwnProperty('flux_unit') ? lightcurve.flux_unit : ''}`;
+                const yaxis_title = `flux, ${metadata.hasOwnProperty('flux_unit') ? metadata.flux_unit : ''}`;
                 if (folded_view) {
                     xColIndex = columns.indexOf('phase');  // Use 'phase' if folded view is active
                     newX = rows.map(row => row[xColIndex]);
@@ -114,6 +119,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             let fullData;
             try {
                 // Parse the JSON data from the store
+//                console.log('updateFoldedView: dataString =', dataString)
                 fullData = JSON.parse(dataString);
                 if (!fullData) {
                     return window.dash_clientside.no_update; // Prevent update if fullData is empty
@@ -123,7 +129,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                     console.error('updateFoldedView Error: Missing metadata in the stored data');
                     return window.dash_clientside.no_update;
                 }
-
+                // console.log('updateFoldedView: metadata =', fullData.metadata)
                 // Update folded_view in metadata based on the phase_view input
                 // Convert phase_view to integer (1 if not empty, otherwise 0)
                 console.log('phase_view =', phase_view);
@@ -181,6 +187,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 // dataString has the structure: { lightcurve: {...}, metadata: {...} }
                 let fullData = JSON.parse(dataString);
                 let lightcurve = fullData.lightcurve; // Extracting the lightcurve data
+                // console.log("!!!!!!!!! selectData: metadata", fullData.metadata)
                 // console.log("lightcurve =", lightcurve);
 
                 // Extract the columns and rows from the lightcurve (a table structure)
@@ -264,9 +271,9 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 if (!deleteClick) {
                     return window.dash_clientside.no_update;
                 }
-
                 // Parse the data from dcc.Store
                 let fullData = JSON.parse(dataString);
+                // console.log("deleteSelected:", fullData.metadata)
                 const { columns, data: rows } = fullData.lightcurve;
                 const selectedColIndex = columns.indexOf('selected');
 

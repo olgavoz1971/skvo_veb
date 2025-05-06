@@ -1,6 +1,7 @@
 import logging
 import io
 
+import numpy as np
 import pandas
 import pandas as pd
 import json
@@ -8,8 +9,17 @@ import json
 from astropy.table import Table
 from astropy.time import Time
 
-from skvo_veb.utils.my_tools import PipeException
+try:
+    # noinspection PyUnresolvedReferences
+    from skvo_veb.utils.my_tools import PipeException
+except ImportError:
+    # noinspection PyUnresolvedReferences
+    from utils import PipeException
+
 from astropy import units as u
+
+jd0 = 2450000
+fill_nans = 'median'
 
 
 def astropy_init(unit_str: str):
@@ -49,85 +59,16 @@ class CurveDash:
     format_dict = _format_dict_text | _format_dict_bytes
     extension_dict = {v: k for k, v in format_dict.items()}
 
-    # def __init__(self, serialized: str | None = None,
-    #              jd=None, flux=None, flux_err=None,
-    #              flux_correction: str | None = None,
-    #              name: str = '', lookup_name: str | None = None,  gaia_id=None,
-    #              title: str = '',
-    #              band='',
-    #              time_unit: str = '', flux_unit: str = '',
-    #              timescale: str | None = None,  # one pf astropy.time Scale or 'hjd' for Heliocentric julian
-    #              period: float | None = None, period_unit: str = 'd',
-    #              epoch: float | None = 0,
-    #              cross_ident=None, folded_view=0):
-    #     """
-    #     Initializes an instance of the class, allowing the creation of a lightcurve from a
-    #     JSON string or directly from lists of time (jd) and flux values. The initialized
-    #     object will have a lightcurve attribute defined as a Pandas DataFrame, either
-    #     deserialized from the provided JSON string or built directly from the input data.
-    #
-    #     :param serialized: A JSON string representation of the lightcurve data.
-    #         If provided, the lightcurve attribute is initialized using this data.
-    #     :type serialized: str | None
-    #     :param jd: A column of Julian dates representing time points of the lightcurve.
-    #         Only used if `js_lightcurve` is not provided.
-    #     :param flux: A column of flux values corresponding to the Julian dates in `jd`.
-    #         Only used if `js_lightcurve` is not provided.
-    #     """
-    #     self.lightcurve: pandas.DataFrame | None = None
-    #     self.metadata = None
-    #     if serialized is not None:
-    #         # Restore from serialized data
-    #         # try upload from the file object
-    #
-    #         try:
-    #             di = json.loads(serialized)
-    #             if not di:  # empty dictionary
-    #                 return  # create an empty lcd
-    #             # self.lightcurve = pd.DataFrame.from_dict(di.get('lightcurve'))
-    #             lightcurve_dict = di.get('lightcurve')
-    #             self.lightcurve = pd.DataFrame(data=lightcurve_dict['data'], columns=lightcurve_dict['columns'])
-    #             self.metadata = di.get('metadata')
-    #         except Exception as e:
-    #             logging.warning(f'curve_dash.__init__: {e}')
-    #             raise PipeException('CurveDash init: unappropriated serialized data')
-    #     elif (jd is not None) and (flux is not None):
-    #         # Create structures from the scratch
-    #         if flux_err is None:
-    #             flux_err = flux / flux  # todo: find a better solution
-    #         df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err})
-    #         # Using loc to avoid SettingWithCopyWarning and ensure in -place DataFrame update
-    #         df.loc[:, 'selected'] = 0
-    #         # create permanent index. Keep it forever, protect against reindexing; important when cleaning data:
-    #         df.loc[:, 'perm_index'] = df.index
-    #         df.loc[:, 'phase'] = 0.0
-    #         self.lightcurve = df
-    #         if lookup_name and lookup_name == name:
-    #             lookup_name = ''
-    #         self.metadata: dict = {'name': name, 'lookup_name': lookup_name, 'gaia_id': gaia_id, 'band': band,
-    #                                'cross_ident': cross_ident,
-    #                                'time_unit': time_unit, 'timescale': timescale,
-    #                                'title': title,
-    #                                'flux_correction': flux_correction,
-    #                                'flux_unit': flux_unit, 'period': period, 'period_unit': period_unit,
-    #                                'epoch': epoch,
-    #                                'folded_view': folded_view}
-    #         self.recalc_phase()  # recalc phase after period and epoch setting
-
-    # def __init__(self, **kwargs):
-    #     self.lightcurve: pandas.DataFrame | None = None
-    #     self.metadata = None
-
     def __init__(self, jd=None, flux=None, flux_err=None,
-                 flux_correction: str | None = None,
+                 flux_correction: str | None = None, zero_point=0.0,
                  name: str = '', lookup_name: str | None = None, gaia_id=None,
                  title: str = '',
                  band='',
                  time_unit: str = '', flux_unit: str = '',
                  timescale: str | None = None,  # one pf astropy.time Scale or 'hjd' for Heliocentric julian
                  period: float | None = None, period_unit: str = 'd',
-                 epoch: float | None = 0,
-                 cross_ident=None, folded_view=0):
+                 epoch: float | None = jd0,
+                 cross_ident=None, folded_view=0, mag_view=0):
         """
         Initializes an instance of the class, allowing the creation of a lightcurve
         directly from lists of time (jd) and flux values. The initialized
@@ -139,29 +80,56 @@ class CurveDash:
             Only used if `js_lightcurve` is not provided.
         """
 
+        if epoch is None:
+            epoch = jd0
         self.lightcurve: pandas.DataFrame | None = None
         self.metadata: dict | None = None
+
+        # Create structures from the scratch
         if (jd is not None) and (flux is not None):
-            # Create structures from the scratch
             if flux_err is None:
-                flux_err = flux / flux  # todo: find a better solution
+                flux_err = np.zeros_like(flux, dtype=float)
+            elif flux.shape != flux_err.shape:
+                raise PipeException('The lengths of the flux and flux_err arrays differ. '
+                                    'Please check the input light curve')
+            # When I create a df from a masked array (like flux_err), pandas automatically converts
+            # the masked values to NaN. And it is actually what I need
             df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err})
+
+            # Clean bad fluxes for the following log and division operations
+            # NaN is used to mark bad values because it is ignored by most statistical functions
+            # and plotting libraries. For instance, NumPy functions like np.nanmean and np.nanstd
+            # automatically skip NaNs in calculations, ensuring that only valid data is considered.
+            # Matplotlib also ignores NaNs when plotting, so bad values don't distort graphs. This
+            # approach keeps calculations and visualizations clean without the need for manual filtering
+
+            # I do the cleanup right here, in the __init__, because I don't want to overload client side callbacks
+            df.loc[df['flux'] <= 0, 'flux'] = np.nan
+            df.loc[df['flux_err'] <= 0, 'flux_err'] = np.nan
+
             # Using loc to avoid SettingWithCopyWarning and ensure in -place DataFrame update
             df.loc[:, 'selected'] = 0
             # create permanent index. Keep it forever, protect against reindexing; important when cleaning data:
             df.loc[:, 'perm_index'] = df.index
             df.loc[:, 'phase'] = 0.0
             self.lightcurve = df
+            # todo: clean flux<=0 here
             if lookup_name and lookup_name == name:
                 lookup_name = ''
-            self.metadata: dict = {'name': name, 'lookup_name': lookup_name, 'gaia_id': gaia_id, 'band': band,
+            # Note: Convert gaia_id to a string to avoid precision loss during JSON serialization.
+            # JSON can lose precision when large integers are directly converted, especially in JavaScript,
+            # so converting gaia_id to a string ensures its full value is preserved when transferred
+            # and parsed on the client-side.
+            self.metadata: dict = {'name': name, 'lookup_name': lookup_name, 'gaia_id': str(gaia_id), 'band': band,
                                    'cross_ident': cross_ident,
                                    'time_unit': time_unit, 'timescale': timescale,
                                    'title': title,
                                    'flux_correction': flux_correction,
                                    'flux_unit': flux_unit, 'period': period, 'period_unit': period_unit,
                                    'epoch': epoch,
-                                   'folded_view': folded_view}
+                                   'folded_view': folded_view,
+                                   'mag_view': mag_view,
+                                   'zero_point': zero_point}
             self.recalc_phase()  # recalc phase after period and epoch setting
 
     @classmethod
@@ -175,10 +143,10 @@ class CurveDash:
         try:
             self = cls()
             if not serialized:
-                return self     # create an empty lcd
+                return self  # create an empty lcd
             di = json.loads(serialized)
             if not di:  # empty dictionary
-                return self     # create an empty lcd
+                return self  # create an empty lcd
             lightcurve_dict = di.get('lightcurve')
             self.lightcurve = pd.DataFrame(data=lightcurve_dict['data'], columns=lightcurve_dict['columns'])
             self.metadata = di.get('metadata')
@@ -196,71 +164,6 @@ class CurveDash:
         if metadata:
             self.metadata = self.metadata | metadata
         return self
-
-    # def __init__(self, serialized: str | None = None,
-    #              jd=None, flux=None, flux_err=None,
-    #              flux_correction: str | None = None,
-    #              name: str = '', lookup_name: str | None = None,  gaia_id=None,
-    #              title: str = '',
-    #              band='',
-    #              time_unit: str = '', flux_unit: str = '',
-    #              timescale: str | None = None,  # one pf astropy.time Scale or 'hjd' for Heliocentric julian
-    #              period: float | None = None, period_unit: str = 'd',
-    #              epoch: float | None = 0,
-    #              cross_ident=None, folded_view=0):
-    #     """
-    #     Initializes an instance of the class, allowing the creation of a lightcurve from a
-    #     JSON string or directly from lists of time (jd) and flux values. The initialized
-    #     object will have a lightcurve attribute defined as a Pandas DataFrame, either
-    #     deserialized from the provided JSON string or built directly from the input data.
-    #
-    #     :param serialized: A JSON string representation of the lightcurve data.
-    #         If provided, the lightcurve attribute is initialized using this data.
-    #     :type serialized: str | None
-    #     :param jd: A column of Julian dates representing time points of the lightcurve.
-    #         Only used if `js_lightcurve` is not provided.
-    #     :param flux: A column of flux values corresponding to the Julian dates in `jd`.
-    #         Only used if `js_lightcurve` is not provided.
-    #     """
-    #     self.lightcurve: pandas.DataFrame | None = None
-    #     self.metadata = None
-    #     if serialized is not None:
-    #         # Restore from serialized data
-    #         # try upload from the file object
-    #
-    #         try:
-    #             di = json.loads(serialized)
-    #             if not di:  # empty dictionary
-    #                 return  # create an empty lcd
-    #             # self.lightcurve = pd.DataFrame.from_dict(di.get('lightcurve'))
-    #             lightcurve_dict = di.get('lightcurve')
-    #             self.lightcurve = pd.DataFrame(data=lightcurve_dict['data'], columns=lightcurve_dict['columns'])
-    #             self.metadata = di.get('metadata')
-    #         except Exception as e:
-    #             logging.warning(f'curve_dash.__init__: {e}')
-    #             raise PipeException('CurveDash init: unappropriated serialized data')
-    #     elif (jd is not None) and (flux is not None):
-    #         # Create structures from the scratch
-    #         if flux_err is None:
-    #             flux_err = flux / flux  # todo: find a better solution
-    #         df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err})
-    #         # Using loc to avoid SettingWithCopyWarning and ensure in -place DataFrame update
-    #         df.loc[:, 'selected'] = 0
-    #         # create permanent index. Keep it forever, protect against reindexing; important when cleaning data:
-    #         df.loc[:, 'perm_index'] = df.index
-    #         df.loc[:, 'phase'] = 0.0
-    #         self.lightcurve = df
-    #         if lookup_name and lookup_name == name:
-    #             lookup_name = ''
-    #         self.metadata: dict = {'name': name, 'lookup_name': lookup_name, 'gaia_id': gaia_id, 'band': band,
-    #                                'cross_ident': cross_ident,
-    #                                'time_unit': time_unit, 'timescale': timescale,
-    #                                'title': title,
-    #                                'flux_correction': flux_correction,
-    #                                'flux_unit': flux_unit, 'period': period, 'period_unit': period_unit,
-    #                                'epoch': epoch,
-    #                                'folded_view': folded_view}
-    #         self.recalc_phase()  # recalc phase after period and epoch setting
 
     def serialize(self):
         """
@@ -307,18 +210,41 @@ class CurveDash:
         return ''
 
     def recalc_phase(self):
+        if self.epoch is None:
+            self.epoch = jd0
         if self.period is not None and self.epoch is not None:
             df = self.lightcurve
             # Using loc to avoid SettingWithCopyWarning and ensure inplace DataFrame update
             df.loc[:, 'phase'] = self.calc_phase(df['jd'], self.epoch, self.period, self.period_unit)
             self.lightcurve = df
 
+    def shift_epoch(self, phi_to_zero: float) -> float:
+        """
+        Calculate the new epoch which brings the phi_to_zero to zero
+        self.period is used to fold the curve
+
+        :param phi_to_zero: the phase (usually the phase of the primary minimum) that needs to be shifted to 0
+        """
+        if self.epoch is None:
+            self.epoch = jd0
+        new_epoch = self.epoch + self.period * phi_to_zero
+        return new_epoch
+
     @staticmethod
     def calc_phase(time_arr, epoch_jd: float | None, period: float | None, period_unit: str):
         # noinspection PyUnresolvedReferences
         period_day = (period * astropy_init(period_unit)).to(u.day)
-        phase = ((time_arr - (0 if epoch_jd is None else epoch_jd)) / (1 if period_day is None else period_day)) % 1
+        epoch_jd = epoch_jd or 0
+        period_day = period_day.value or 1
+        # period_day = 1 if period_day is None else period_day
+        # epoch_jd = 0 if epoch_jd is None else epoch_jd
+        phase = ((time_arr - epoch_jd) / period_day) % 1
         return phase
+    # def calc_phase(time_arr, epoch_jd: float | None, period: float | None, period_unit: str):
+    #     # noinspection PyUnresolvedReferences
+    #     period_day = (period * astropy_init(period_unit)).to(u.day)
+    #     phase = ((time_arr - (0 if epoch_jd is None else epoch_jd)) / (1 if period_day is None else period_day)) % 1
+    #     return phase
 
     @staticmethod
     def get_format_list() -> list[str]:
@@ -353,6 +279,43 @@ class CurveDash:
     @property
     def flux_err(self):
         return self.lightcurve.get('flux_err') if self.lightcurve is not None else None
+
+    @property
+    def mag(self):
+        """Convert fluxes to magnitudes using the standard formula.
+        Returns NaN for invalid (non-positive) flux values.
+        """
+        if self.lightcurve is None:
+            return None
+
+        flux = self.lightcurve.get('flux')
+        if flux is None:
+            return None
+
+        flux[flux <= 0] = np.nan
+        return -2.5 * np.log10(flux) + self.zero_point
+
+    @property
+    def mag_err(self):
+        """Convert flux errors to magnitude errors using the formula:
+        mag_err = 1.0857 * flux_err / flux
+        Returns NaN where flux is non-positive or either value is missing.
+        """
+        if self.lightcurve is None:
+            return None
+
+        flux = self.lightcurve.get('flux')
+        flux_err = self.lightcurve.get('flux_err')
+        if flux is None or flux_err is None:
+            return None
+
+        flux = np.array(flux, copy=True)
+        flux_err = np.array(flux_err, copy=True)
+
+        flux[flux <= 0] = np.nan  # mark bad flux values
+        mag_err = 1.0857 * flux_err / flux
+
+        return mag_err
 
     @property
     def jd(self):
@@ -401,7 +364,16 @@ class CurveDash:
     def period(self, value):
         if self.metadata is not None:
             self.metadata['period'] = value
-            self.recalc_phase()
+            # self.recalc_phase()
+
+    @property
+    def zero_point(self):
+        return self.metadata.get('zero_point') if self.metadata is not None else None
+
+    @zero_point.setter
+    def zero_point(self, value):
+        if self.metadata is not None:
+            self.metadata['zero_point'] = value
 
     @property
     def period_unit(self):
@@ -411,7 +383,7 @@ class CurveDash:
     def period_unit(self, value):
         if self.metadata is not None:
             self.metadata['period_unit'] = value
-            self.recalc_phase()
+            # self.recalc_phase()
 
     @property
     def period_unit_ap(self):
@@ -423,9 +395,10 @@ class CurveDash:
 
     @epoch.setter
     def epoch(self, value):
+        logging.debug(f'Epoch setter, new epoch={value}')
         if self.metadata is not None:
             self.metadata['epoch'] = value
-            self.recalc_phase()
+            # self.recalc_phase()
 
     @property
     def gaia_id(self):
@@ -435,6 +408,65 @@ class CurveDash:
     def band(self):
         return self.metadata.get('band') if self.metadata else None
 
+    def find_phase_of_min_simple(self):
+        """
+        First, robust version
+        :return:phase of the folded light curve minimum
+        """
+        self.recalc_phase()
+        phase_of_min = self.lightcurve['phase'][np.argmin(self.lightcurve['flux'])]
+        return phase_of_min
+
+    def find_phase_of_min_gauss(self):
+        """
+        Fine version. Fir Gaussian in the surroundings of minimum (initial guess);
+        Thanks to Maxim Gabdeev
+        :return:phase of the folded light curve minimum
+        """
+        from scipy.optimize import curve_fit
+        # import numpy as np
+
+        def gaussian(x_, a, x0, sigma):
+            return a * np.exp(-(x_ - x0) ** 2 / (2 * sigma ** 2))
+
+        self.recalc_phase()
+        # initial_guess = [max(y), x_[np.argmax(y)], 0.2 * period]
+
+        # Turn upside down the lightcurve to fit a Gaussian into the primary minimum:
+        x = self.lightcurve['phase']
+        y = self.lightcurve['flux'].max() - self.lightcurve['flux']
+        initial_guess = [max(y), x[np.argmax(y)], 0.2]
+
+        # Shift the phase to keep the minimum within [0.2, 0.8] for a continuous Gaussian fit
+        if initial_guess[1] < 0.2:
+            logging.debug('find_phase_of_min_gauss: shift left part to the right')
+            x = np.where(x < 0.5, x + 1, x)  # shift left part to the right
+            initial_guess[1] += 1
+        elif initial_guess[1] > 0.8:
+            logging.debug('find_phase_of_min_gauss: shift right part to the left')
+            x = np.where(x > 0.5, x - 1, x)  # shift right part to the left
+            initial_guess[1] -= 1
+
+        # Take points around the initial guess within phase 0.2
+        # A also mak nans, because curve_fit is sensitive to them (it raises an Exception)
+        mask = (x > initial_guess[1] - 0.2) & (x < initial_guess[1] + 0.2) & ~np.isnan(y)
+        x_fit = x[mask]
+        y_fit = y[mask]
+        try:
+            # Fit the Gaussian model to the data
+            # res = curve_fit(gaussian, x_fit.to_numpy(), y_fit.to_numpy(),
+            popt, pcov, _, _, _ = curve_fit(gaussian, x_fit, y_fit.to_numpy(), p0=initial_guess, full_output=True)
+            # res = curve_fit(gaussian, x_fit, y_fit.to_numpy(),
+            #                 p0=initial_guess)
+            # The center of the eclipse is the mean of the Gaussian
+            logging.debug(f'find_phase_of_min_gauss: {popt=}')
+            # popt = res[0]
+            phase_of_min = popt[1]      # todo: check this warning
+            return phase_of_min
+        except RuntimeError as e:
+            logging.error(e)
+
+    # todo: Rewrite the following methods in JavaScript
     def cut(self, left_border, right_border):
         """
         Remove a piece of lightcurve between  left_border and right_border along the time axis
@@ -487,6 +519,7 @@ class CurveDash:
         tab = tab[[col for col in selected_columns if col in tab.colnames]]
         tab.meta = self.metadata
         tab.write(my_weird_io, format=table_format, overwrite=True)
+
         # self.lightcurve.write(my_weird_io, format=table_format, overwrite=True)
         my_weird_string = my_weird_io.getvalue()
         if isinstance(my_weird_string, str):
