@@ -153,7 +153,7 @@ class CurveDash:
             return self
         except Exception as e:
             logging.warning(f'curve_dash.__init__: {e}')
-            raise PipeException('CurveDash init: unappropriated serialized data')
+            raise PipeException('CurveDash init: inconsistent serialized data')
 
     @classmethod
     def from_file(cls, file_obj: io.BytesIO, extension: str):
@@ -465,6 +465,7 @@ class CurveDash:
             return phase_of_min
         except RuntimeError as e:
             logging.error(e)
+            return None
 
     # todo: Rewrite the following methods in JavaScript
     def cut(self, left_border, right_border):
@@ -488,7 +489,7 @@ class CurveDash:
     def download(self, table_format='ascii.ecsv') -> bytes:
         """
         Write astropy Table into some string. The io.StringIO or io.BytesIO mimics the output file for Table.write()
-        The specific IO-type depends on the desirable output format, i.e. on the writer type:
+        The specific IO type depends on the desirable output format, i.e., on the writer type:
         astropy.io.ascii.write, astropy.io.fits.write, astropy.io.votable.write
         We use BytesIO for binary format (including xml-type votable, Yes!) and StringIO for the text formats.
         If you know the better way, please tell me

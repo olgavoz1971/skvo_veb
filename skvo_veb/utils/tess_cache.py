@@ -1,17 +1,11 @@
-# import pickle
 import dill
-# import joblib
 import logging
 import tarfile
 import os
 import hashlib
-from pathlib import Path
 
 import lightkurve
 from lightkurve import TessTargetPixelFile, TessLightCurve
-
-# CACHE_DIR = Path('cache')
-# CACHE_DIR.mkdir(exist_ok=True)
 
 
 def _get_cache_filename(prefix, extension='dill', **kwargs, ):

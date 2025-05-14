@@ -4,6 +4,10 @@ import time
 
 from astropy.coordinates import SkyCoord
 
+positive_float_pattern = r"^(?:\d+\.?\d*|\.\d+)$"
+float_pattern = r"^-?(?:\d+\.?\d*|\.\d+)$"
+positive_integer_pattern = r"^[1-9]\d*$"
+
 
 def sanitize_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*, ]', '_', name)
@@ -26,6 +30,13 @@ def log_gamma(data, gamma=0.9, log=True):
 
 def safe_none(value):
     return '' if value is None else value
+
+
+def safe_float(value, fill_value=None):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fill_value
 
 
 def timeit(f):

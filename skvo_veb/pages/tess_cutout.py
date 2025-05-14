@@ -24,7 +24,7 @@ try:
     from skvo_veb.components import message
     from skvo_veb.utils import tess_cache as cache
     from skvo_veb.utils.curve_dash import CurveDash
-    from skvo_veb.utils.my_tools import PipeException, safe_none, log_gamma, sanitize_filename
+    from skvo_veb.utils.my_tools import PipeException, safe_none, log_gamma, sanitize_filename, positive_float_pattern
 except ImportError:  # LOCAL_VERSION
     import message  # todo rename this, give him more specific name
     # noinspection PyUnresolvedReferences
@@ -32,7 +32,7 @@ except ImportError:  # LOCAL_VERSION
     # noinspection PyUnresolvedReferences
     from curve_dash import CurveDash
     # noinspection PyUnresolvedReferences
-    from utils import PipeException, safe_none, log_gamma, sanitize_filename
+    from utils import PipeException, safe_none, log_gamma, sanitize_filename, positive_float_pattern
     # todo rename utils, give him more specific name
 
 jd0_tess = 2457000  # btjd format. We can use the construction Time(2000, format="btjd", scale="tbd") directly,
@@ -50,20 +50,21 @@ page_layout = dbc.Container([
                 dbc.Col([
                     dbc.Stack([
                         dbc.Label('Object', html_for='obj_name_tess_input', style={'width': '7em'}),
-                        dcc.Input(id='obj_name_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                        dcc.Input(id='obj_name_tess_input', persistence=True, type='search', style={'width': '100%'}),
                     ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                     dbc.Stack([
                         dbc.Label('RA', html_for='ra_input', style={'width': '7em'}),
-                        dcc.Input(id='ra_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                        dcc.Input(id='ra_tess_input', persistence=True, type='search', style={'width': '100%'}),
                     ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                     dbc.Stack([
                         dbc.Label('DEC', html_for='dec_tess_input', style={'width': '7em'}),
-                        dcc.Input(id='dec_tess_input', persistence=True, type='text', style={'width': '100%'}),
+                        dcc.Input(id='dec_tess_input', persistence=True, type='search', style={'width': '100%'}),
                     ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
                     dbc.Stack([
                         dbc.Label('Radius', id='radius_tess_lbl', html_for='radius_tess_input',
                                   style={'width': '7em'}),
-                        dcc.Input(id='radius_tess_input', persistence=True, type='number', min=1, value=11,
+                        dcc.Input(id='radius_tess_input', persistence=True, type='search',
+                                  pattern=positive_float_pattern, value=11,
                                   style={'width': '100%'}),
                         dbc.Tooltip('Search radius in arcseconds', target='radius_tess_lbl', placement='bottom'),
                     ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
@@ -79,54 +80,50 @@ page_layout = dbc.Container([
                         ],
                         value='tpf',
                         labelStyle={'display': 'inline-block', 'padding': '5px'}),
-                ], lg=2, md=3, sm=4, xs=12,
+                ], md=3, sm=4, xs=12,
                     style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # SearchTools
                 dbc.Col([
                     dbc.Spinner(children=[
                         html.Div([
-                            dbc.Row([
-                                dbc.Col([
-                                    html.H3("Search results", id="table_tess_header"),
-                                ], md=6, sm=12),
-                                dbc.Col([
-                                    dbc.Stack([
-                                        dbc.Label('Size', html_for='size_ffi_input', style={'width': '7em'}),
-                                        dcc.Input(id='size_ffi_input', persistence=True, type='number', min=1,
-                                                  value=11,
-                                                  style={'width': '100%'}),
-                                        dbc.Button('Download sector', id='download_sector_button', size="sm",
-                                                   style={'width': '100%'}),
-                                        dbc.Button('Cancel', id='cancel_download_sector_button', size="sm",
-                                                   style={'width': '100%'}),
-                                    ], direction='horizontal', gap=2, style={'marginBottom': '5px'}),
-                                ], md=6, sm=12),
-                            ]),
-                            dbc.Row([
-                                DataTable(
-                                    id="data_tess_table",
-                                    columns=[{"name": col, "id": col} for col in
-                                             ["#", "mission", "year", "author", "exptime", "target", "distance"]],
-                                    data=[],
-                                    row_selectable="single",
-                                    fixed_rows={'headers': True},  # Freeze the header
-                                    style_table={
-                                        'maxHeight': '30vh',
-                                        'overflowY': 'auto',  # vertical scrolling
-                                        'overflowX': 'auto',  # horizontal scrolling
-                                    },
-                                    page_action="native", sort_action="native",
-                                    style_cell={"font-size": 14, 'textAlign': 'left'},
-                                    cell_selectable=False,
-                                    style_header={"font-size": 14, 'font-family': 'courier',
-                                                  'color': '#000',
-                                                  'backgroundColor': 'var(--bs-light)',
-                                                  'textAlign': 'left'},
-                                )
-                            ]),
+                            html.Div([
+                                html.H3("Search results", id="table_tess_header"),
+                                dbc.Stack([
+                                    dbc.Label('Size', html_for='size_ffi_input',
+                                              style={'width': '7em', 'marginBottom': 0}),
+                                    dcc.Input(id='size_ffi_input', type='number', min=1, value=11,
+                                              style={'width': '5em'}),
+                                    dbc.Button('Download sector', id='download_sector_button', size="sm",
+                                               style={'width': '100%'}),
+                                    dbc.Button('Cancel', id='cancel_download_sector_button', size="sm",
+                                               style={'width': '100%'}),
+                                ], direction='horizontal', gap=2),
+                            ], style={'display': 'flex', 'justifyContent': 'space-between',
+                                      'alignItems': 'center', 'width': '100%'}
+                            ),
+                            DataTable(
+                                id="data_tess_table",
+                                columns=[{"name": col, "id": col} for col in
+                                         ["#", "mission", "year", "author", "exptime", "target", "distance"]],
+                                data=[],
+                                row_selectable="single",
+                                fixed_rows={'headers': True},  # Freeze the header
+                                style_table={
+                                    'maxHeight': '30vh',
+                                    'overflowY': 'auto',  # vertical scrolling
+                                    'overflowX': 'auto',  # horizontal scrolling
+                                },
+                                page_action="native", sort_action="native",
+                                style_cell={"font-size": 14, 'textAlign': 'left'},
+                                cell_selectable=False,
+                                style_header={"font-size": 14, 'font-family': 'courier',
+                                              'color': '#000',
+                                              'backgroundColor': 'var(--bs-light)',
+                                              'textAlign': 'left'},
+                            )
                         ], id="search_results_row", style={"display": "none"}),  # Search results
                         html.Div(id='div_tess_search_alert', style={"display": "none"}),  # Alert
                     ]),
-                ], lg=10, md=9, sm=8, xs=12),
+                ], md=9, sm=8, xs=12),  # SearchResult table
             ], style={'marginBottom': '10px'}),  # Search and SearchResults
             dbc.Spinner(children=[
                 dbc.Label(id="download_sector_result", children='',
@@ -155,10 +152,7 @@ page_layout = dbc.Container([
                                       style={'font-size': label_font_size}),  # style={'margin-left': 'auto'}),
                     ]),
                     dbc.Button('Plot pixel', id='replot_pixel_button', size="sm",
-                               style={
-                                   # 'marginBottom': '5px', 'marginTop': '5px',
-                                   # 'marginLeft': '2px', 'marginRight': '2px',
-                                   'width': '100%'}),
+                               style={'width': '100%'}),
                     html.Details([
                         html.Summary('Mask', style={'font-size': label_font_size}),
                         dcc.RadioItems(
@@ -198,7 +192,6 @@ page_layout = dbc.Container([
                             is_open=True,
                         ),  # specify an auto mask threshold here
                     ], open=True),
-                    # ], justify='between', style={'marginBottom': '5px'}),  # mask switches
                 ], md=2, sm=4, style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # tools
                 dbc.Col([
                     dcc.Markdown(
@@ -239,7 +232,6 @@ page_layout = dbc.Container([
                     dbc.Checklist(options=[{'label': 'Sub bkg', 'value': 1}], value=0,
                                   style={'font-size': label_font_size},
                                   id='sub_bkg_switch', persistence=True, switch=True),
-                    # html.Details([
                     dbc.Stack([  # I separate a Label and a Switch to have tooltip when hovering the label
                         dbc.Switch(
                             value=False,
@@ -250,7 +242,6 @@ page_layout = dbc.Container([
                                   id='flatten_switch_label',
                                   style={'font-size': label_font_size}),
                     ], direction='horizontal'),
-
                     dbc.Collapse([
                         dbc.Stack([
                             dbc.Label('Display:', id='flux_trend_switch_label',
@@ -338,26 +329,18 @@ page_layout = dbc.Container([
                         ),
                         dbc.Button('Compare', id='plot_difference_button', size="sm",
                                    style={'width': '100%'})
-                    ]),  # plot / compare  curves options
+                    ], style={'marginBottom': '5px'}),  # plot / compare  curves options
                     dbc.Button('Cut out selected', id='cut_tess_button', size="sm",
-                               style={
-                                   # 'marginBottom': '5px',
-                                   'marginTop': '5px',
-                                   #  'marginLeft': '2px', 'marginRight': '2px',
-                                   'width': '100%'}),
-                    dbc.Row([
-                        dbc.Stack([
-                            dbc.Select(options=CurveDash.get_format_list(),
-                                       # handler.get_format_list(),
-                                       value=CurveDash.get_format_list()[0],
-                                       # value=handler.get_format_list()[0],
-                                       id='select_tess_format',
-                                       style={'max-width': '7em', 'font-size': label_font_size}),
-                            dbc.Button('Download', id='btn_download_tess', size="sm"),
-                        ], direction='horizontal', gap=2, style=stack_wrap_style),
-                    ], justify='between',
-                        className='gy-1',  # class adds vertical gaps between folded columns
-                        style={'marginBottom': '5px', 'marginTop': '5px'}),  # download curve
+                               style={'marginBottom': '5px', 'width': '100%'}),
+                    dbc.Stack([
+                        dbc.Select(options=CurveDash.get_format_list(),
+                                   value=CurveDash.get_format_list()[0],
+                                   id='select_tess_format',
+                                   style={'width': '40%', 'font-size': label_font_size}),
+                        dbc.Button('Download', style={'width': '60%'}, id='btn_download_tess', size="sm"),
+                    ], direction='horizontal', gap=2,
+                        style={'width': '100%', 'min-width': '5ch', 'marginBottom': '5px'},
+                    ),
                 ], lg=2, md=3, sm=4, xs=12,
                     style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # Light Curve Tools
                 dbc.Col([
@@ -411,7 +394,6 @@ page_layout = dbc.Container([
     dcc.Store(id='mask_fast_store'),  # mask changed on client side
     dcc.Store(id='wcs_store'),  # store wcs to sync with Aladin applet
     dcc.Store(id='store_tess_cutout_lightcurve'),  # user's lightcurve is here
-    # dcc.Store(id='store_tess_cutout_curve_metadata'),   # lightcurve related metadata: Name, Sector, etc.
     dcc.Store(id='lc2_store'),  # the second lightcurve is here
     dcc.Store(id='lc3_store'),  # the third lightcurve is here
     dcc.Download(id='download_tess_lightcurve'),
