@@ -1,5 +1,8 @@
 # DISK_CACHE = True  # this makes sense only for a local version
 import os
+import time
+
+from pyarrow import uint8
 
 DISK_CACHE = False
 
@@ -27,7 +30,8 @@ import diskcache
 
 user_cache_dir = os.getenv('USER_CACHE_DIR')
 user_cache = diskcache.Cache(user_cache_dir)
-user_cache.clear()  # Cleans all entries on startup
+# This works weirdly with apache2, it could re-import module occasionally
+# user_cache.clear()  # Cleans all entries on startup.
 import uuid
 
 try:
@@ -537,16 +541,23 @@ def create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method,
         jd = lc_res.time.value
         flux = lc_res.flux.value
         flux_err = lc_res.flux_err.value
+        sector_array = np.concatenate([
+            np.full(len(lc), lc.SECTOR, dtype=np.uint8)
+            for lc in lc_list
+        ])
     else:
         jd = np.array([], dtype=float)
         flux = np.array([], dtype=float)
         flux_err = np.array([], dtype=float)
+        sector_array = np.array([], dtype=np.uint8)
         for lc in lc_list:
             # flux = np.append(lc.flux.value, flux)
             flux = np.concatenate([flux, lc.flux.value])
             # flux_err = np.append(lc.flux_err.value, flux_err)
             flux_err = np.concatenate([flux_err, lc.flux_err.value])
             jd = np.concatenate([jd, lc.time.value])
+            sector_array = np.concatenate([sector_array,
+                                           np.full_like(lc.time.value, fill_value=lc.SECTOR, dtype=np.uint8)])
             # Pandas converts masked values into NaNs in the following code
 
     # In the following code, we lose the mask, but Pandas converts masked values into NaNs.
@@ -563,6 +574,7 @@ def create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method,
 
     lcd = CurveDash(name=lc_list[0].LABEL, lookup_name=metadata.get('lookup_name', None),
                     jd=jd + jd0_tess, flux=flux, flux_err=flux_err,
+                    label=sector_array,
                     time_unit=time_unit, timescale='tdb',
                     flux_unit=flux_unit,
                     folded_view=phase_view,
@@ -578,12 +590,20 @@ def create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method,
     return lcd.serialize()
 
 
+def _compose_user_key(user_tab_id):
+    return f'{user_tab_id}_data'
+
+
 def extract_data_from_user_cache(user_tab_id):
     if user_tab_id is None:
         raise PipeException('Please, download light curve first')
-    user_data = user_cache.get(f'{user_tab_id}_data')
+    user_key = _compose_user_key(user_tab_id)
+    user_data = user_cache.get(user_key, default=None)
     if user_data is None:  # m.b user's cache has been expired and deleted
+        logging.warning(f'lightcurve_tess: extract_data_from_user_cache time={time.time()} {user_tab_id=}')
         raise PipeException('Please, download light curve. User\'s cache is empty')
+    # Implement sliding expiration:
+    user_cache.set(user_key, user_data, expire=86400)   # Refresh the expiration time on read
     return user_data
 
 
@@ -601,21 +621,29 @@ def plot_lc(js_lightcurve: str, phase_view: bool):
         x_column = 'jd'
         xaxis_title = f'jd-{jd0}, {safe_none(lcd.time_unit)} {lcd.timescale}'
 
-    df = pd.concat([x, lcd.flux, lcd.perm_index], axis=1)
-    fig = px.scatter(df, x=x_column, y='flux', custom_data='perm_index')
+    df = pd.concat([x, lcd.flux, lcd.label, lcd.perm_index], axis=1)
+    fig = px.scatter(df,
+                     x=x_column,
+                     y='flux',
+                     color='label',  # <-- assign color by 'label' column
+                     custom_data='perm_index')
     fig.update_traces(
         selected={'marker': {'color': 'orange', 'size': 5}},
         hoverinfo='none',  # Important
         hovertemplate=None,  # Important
         mode='markers',
-        marker=dict(color='blue', size=5, symbol='circle')
+        marker=dict(size=3, symbol='circle')
+        # marker=dict(color='blue', size=5, symbol='circle')
     )
-    fig.update_layout(xaxis={'title': 'phase', 'tickformat': '.1f'},
-                      yaxis_title='flux',
-                      margin=dict(l=0, b=20),  # r=50, t=50, b=20))
-                      # dragmode='lasso'  # Enable lasso selection mode by default
-                      )
 
+    fig.update_layout(
+        title=title,
+        # showlegend=False,
+        legend_title_text='Sector',
+        margin=dict(l=0, b=20, t=30, r=20),
+        xaxis_title=xaxis_title,
+        yaxis_title=f'flux, {safe_none(flux_unit)}'
+    )
     # fig = go.Figure()
 
     # fig.add_trace(go.Scatter(
@@ -629,14 +657,6 @@ def plot_lc(js_lightcurve: str, phase_view: bool):
     #     marker=dict(color='blue', size=6, symbol='circle'),
     #     # line=dict(color='blue', width=1)  # , dash='dash')
     # ))
-
-    fig.update_layout(
-        title=title,
-        showlegend=False,
-        margin=dict(l=0, b=20, t=30, r=20),
-        xaxis_title=xaxis_title,
-        yaxis_title=f'flux, {safe_none(flux_unit)}'
-    )
 
     return fig
 
@@ -1063,8 +1083,10 @@ clientside_callback(
 
 
 def write_user_data_to_cache(user_data, user_tab_id):
-    user_cache.set(f'{user_tab_id}_data', user_data,
+    user_key = _compose_user_key(user_tab_id)
+    user_cache.set(user_key, user_data,
                    expire=86400)  # in seconds todo: check and change it
+    logging.info(f'lightcurve_tess: write_user_data_to_cache time={time.time()}')
 
 
 def generate_user_tab_id():

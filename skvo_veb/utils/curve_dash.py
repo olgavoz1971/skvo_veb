@@ -59,7 +59,7 @@ class CurveDash:
     format_dict = _format_dict_text | _format_dict_bytes
     extension_dict = {v: k for k, v in format_dict.items()}
 
-    def __init__(self, jd=None, flux=None, flux_err=None,
+    def __init__(self, jd=None, flux=None, flux_err=None, label=None,
                  flux_correction: str | None = None, zero_point=0.0,
                  name: str = '', lookup_name: str | None = None, gaia_id=None,
                  title: str = '',
@@ -78,6 +78,7 @@ class CurveDash:
             Only used if `js_lightcurve` is not provided.
         :param flux: A column of flux values corresponding to the Julian dates in `jd`.
             Only used if `js_lightcurve` is not provided.
+        :param label: an array of uint8 values to mark groups of points (foe example TESS sectors)
         """
 
         if epoch is None:
@@ -94,7 +95,13 @@ class CurveDash:
                                     'Please check the input light curve')
             # When I create a df from a masked array (like flux_err), pandas automatically converts
             # the masked values to NaN. And it is actually what I need
-            df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err})
+            if label is None:
+                label = np.zeros(flux.shape, dtype=np.uint8)
+            elif label.shape != flux.shape:
+                raise PipeException('The lengths of the label and flux arrays differ. '
+                                    'Please check the input light curve')
+
+            df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err, 'label': label})
 
             # Clean bad fluxes for the following log and division operations
             # NaN is used to mark bad values because it is ignored by most statistical functions
@@ -160,7 +167,12 @@ class CurveDash:
         t = Table.read(file_obj, format=CurveDash.get_table_format(extension))
         flux_unit = str(getattr(t['flux'], 'unit', ''))
         metadata = getattr(t, 'meta', None)
-        self = cls(jd=t['time'].jd, flux=t['flux'], flux_err=t['flux_err'], flux_unit=flux_unit, time_unit='d')
+        if 'label' in t.colnames:
+            label = t['label']
+        else:
+            label = None
+        self = cls(jd=t['time'].jd, flux=t['flux'], flux_err=t['flux_err'],
+                   label=label, flux_unit=flux_unit, time_unit='d')
         if metadata:
             self.metadata = self.metadata | metadata
         return self
@@ -240,6 +252,7 @@ class CurveDash:
         # epoch_jd = 0 if epoch_jd is None else epoch_jd
         phase = ((time_arr - epoch_jd) / period_day) % 1
         return phase
+
     # def calc_phase(time_arr, epoch_jd: float | None, period: float | None, period_unit: str):
     #     # noinspection PyUnresolvedReferences
     #     period_day = (period * astropy_init(period_unit)).to(u.day)
@@ -324,6 +337,12 @@ class CurveDash:
     @property
     def phase(self):
         return self.lightcurve.get('phase') if self.lightcurve is not None else None
+
+    @property
+    def label(self):
+        if self.lightcurve is not None and 'label' in self.lightcurve:
+            return self.lightcurve['label'].astype(str)
+        return None
 
     @property
     def perm_index(self):
@@ -461,7 +480,7 @@ class CurveDash:
             # The center of the eclipse is the mean of the Gaussian
             logging.debug(f'find_phase_of_min_gauss: {popt=}')
             # popt = res[0]
-            phase_of_min = popt[1]      # todo: check this warning
+            phase_of_min = popt[1]  # todo: check this warning
             return phase_of_min
         except RuntimeError as e:
             logging.error(e)
@@ -513,9 +532,9 @@ class CurveDash:
 
         if table_format == 'votable' or table_format == 'pandas.json':
             tab['jd'] = tab['time'].jd
-            selected_columns = ['jd', 'phase', 'flux', 'flux_err']
+            selected_columns = ['jd', 'phase', 'flux', 'flux_err', 'label']
         else:
-            selected_columns = ['time', 'phase', 'flux', 'flux_err']
+            selected_columns = ['time', 'phase', 'flux', 'flux_err', 'label']
 
         tab = tab[[col for col in selected_columns if col in tab.colnames]]
         tab.meta = self.metadata

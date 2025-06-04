@@ -309,9 +309,9 @@ page_layout = dbc.Container([
                         dcc.RadioItems(
                             id='star_tess_switch',
                             options=[
-                                {'label': 'Star1', 'value': '1'},
-                                {'label': 'Star2', 'value': '2'},
-                                {'label': 'Star3', 'value': '3'},
+                                {'label': 'Curve 1', 'value': '1'},
+                                {'label': 'Curve 2', 'value': '2'},
+                                {'label': 'Curve 3', 'value': '3'},
                             ],
                             value='1',
                             labelStyle=switch_label_style,
@@ -330,7 +330,7 @@ page_layout = dbc.Container([
                         dbc.Button('Compare', id='plot_difference_button', size="sm",
                                    style={'width': '100%'})
                     ], style={'marginBottom': '5px'}),  # plot / compare  curves options
-                    dbc.Button('Cut out selected', id='cut_tess_button', size="sm",
+                    dbc.Button('Trim selected', id='cut_tess_button', size="sm",
                                style={'marginBottom': '5px', 'width': '100%'}),
                     dbc.Stack([
                         dbc.Select(options=CurveDash.get_format_list(),
@@ -930,6 +930,8 @@ def create_lightcurve_figure(js_lightcurve: str | None):
     xaxis_title = f'time, {safe_none(lcd.time_unit)}'
     yaxis_title = f'flux {safe_none(lcd.flux_correction)}, {safe_none(lcd.flux_unit)}'
 
+    # xrange_left =
+    # xrange_right =
     title = lcd.title
 
     fig = go.Figure()
@@ -1096,9 +1098,6 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
         lc2=Input('lc2_store', 'data'),
         lc3=Input('lc3_store', 'data'),
     ),
-    # state=dict(
-    #     lc_metadata=State('store_tess_cutout_curve_metadata', 'data'),
-    # ),
     prevent_initial_call=True
 )
 def plot_lightcurve(lc1, lc2, lc3):
@@ -1109,7 +1108,6 @@ def plot_lightcurve(lc1, lc2, lc3):
 
     print(f'{triggered_ids=} { ctx.triggered_id=}')
 
-    # output_keys = ['fig1', 'fig2', 'fig3']
     output_keys = list(ctx.outputs_grouping.keys())
     output = {key: no_update for key in output_keys}
     active_item = ['accordion_item_1']
