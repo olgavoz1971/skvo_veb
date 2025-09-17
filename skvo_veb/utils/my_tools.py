@@ -60,7 +60,14 @@ class PipeException(Exception):
     pass
 
 
-def is_like_gaia_id(value: str):
+class DataStructureException(Exception):
+    # print(f'My exception {Exception} occurred')
+    pass
+
+
+def is_like_gaia_id(value: str | None):
+    if value is None:
+        return False
     return bool(re.fullmatch(r'\d+', value))
 
 

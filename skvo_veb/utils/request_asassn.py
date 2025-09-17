@@ -42,8 +42,8 @@ def _load_from_cache(gaia_id) -> (pandas.DataFrame | None, float | None, float |
         return None, None, None
 
 
-def _store_in_cache(gaia_id, df: pandas.DataFrame, epoch: float | None = None, period: float | None = None):
-    path_to_cached_data = _build_path_to_cache(gaia_id)
+def _store_in_cache(source_id, df: pandas.DataFrame, epoch: float | None = None, period: float | None = None):
+    path_to_cached_data = _build_path_to_cache(source_id)
     if not path_to_cached_data:
         return
     # if os.access(cache_dir, os.W_OK)
@@ -52,52 +52,79 @@ def _store_in_cache(gaia_id, df: pandas.DataFrame, epoch: float | None = None, p
         df.attrs['period'] = period
         df.to_pickle(path_to_cached_data)
     except Exception as e:
-        logging.warning(f'Store Asas-SN lightcurve in cache: {e}')
+        logging.warning(f'Store Asas-SN df_lc in cache: {e}')
 
 
 @timeit
-def load_asassn_lightcurve(gaia_id: int, band='g', force_update=False) -> CurveDash:
+def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = None,
+                           band='g', force_update=False) -> CurveDash:
     epoch = None
     period = None
     lc_df = None
+    if gaia_id is None and source_id is None:
+        raise PipeException('load_asassn_lightcurve: both input names are None')
+    caching_name = gaia_id if gaia_id is not None else source_id.upper()
 
     if not force_update:
-        lc_df, epoch, period = _load_from_cache(gaia_id)
+        lc_df, epoch, period = _load_from_cache(caching_name)
         if lc_df is not None and lc_df.empty:
             raise DBException(f'Gaia DR3 {gaia_id} was not found in the cached ASAS-SN database\n'
                               f'Consider forcing a fetch if the data is really needed')
-    if lc_df is None:       # Try to load it from the remote database:
+    if lc_df is None:  # Try to load it from the remote database:
         try:
             client = SkyPatrolClient()
         except Exception as e:
             logging.error('request_asassn SkyPatrolClient exception', e)
-            raise e
+            raise PipeException('load_asassn_lightcurve: both input names are None')
         try:
-            # res = client.query_list(gaia_id, catalog='stellar_main', id_col='gaia_id', download=True)
-            res = client.adql_query(f'SELECT asas_sn_id, epoch, period FROM stellar_main '
-                                    f'JOIN aavsovsx USING(asas_sn_id) WHERE gaia_id = {gaia_id}',
-                                    download=True)
-            # lc_df = getattr(res, 'data', [])
-            logging.info('Lightcurve is ready. Or not...')
+            # # res = client.query_list(gaia_id, catalog='stellar_main', id_col='gaia_id', download=True)
+            if gaia_id is not None:
+                res = client.adql_query(f'SELECT asas_sn_id, epoch, period FROM stellar_main '
+                                        f'JOIN aavsovsx USING(asas_sn_id) WHERE gaia_id = {gaia_id}',
+                                        download=True)
+                if hasattr(res, 'catalog_info'):
+                    # res.catalog_info.replace({float('nan'): None}, inplace=True)
+                    epoch = getattr(res.catalog_info, 'epoch', [None])[0]
+                    period = getattr(res.catalog_info, 'period', [None])[0]
+                    # epoch = None if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
+                    epoch = 0 if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
+                    period = None if period is None or (isinstance(period, float) and isnan(period)) else period
+            elif source_id is not None:
+                res = client.simbad_lookup(source_id, download=True)
+                try:
+                    # asas_sn_id = res.ids[0]
+                    asas_sn_id = res.data['asas_sn_id'][0]
+                    res_params = client.adql_query(f'SELECT epoch, period '
+                                                   f'FROM aavsovsx WHERE asas_sn_id = {asas_sn_id}',
+                                                   download=False)
+                    epoch = res_params.get('epoch')[0]
+                    period = res_params.get('period')[0]
+                    epoch = 0 if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
+                    period = None if period is None or (isinstance(period, float) and isnan(period)) else period
+                except Exception as e:
+                    logging.warning(f'load_asassn_lightcurve: asas_sn_id did not extracted: {e}')
+            else:
+                raise PipeException('load_asassn_lightcurve: both input names are None')
+            logging.info('Lightcurve is ready')
             if hasattr(res, 'data'):
                 lc_df = res.data
             if lc_df is None or lc_df.empty:
-                _store_in_cache(gaia_id, pd.DataFrame())
+                _store_in_cache(caching_name, pd.DataFrame())
                 raise DBException(f'The source Gaia DR3 {gaia_id} was not found in the ASAS-SN database')
-            if hasattr(res, 'catalog_info'):
-                # res.catalog_info.replace({float('nan'): None}, inplace=True)
-                epoch = getattr(res.catalog_info, 'epoch', [None])[0]
-                period = getattr(res.catalog_info, 'period', [None])[0]
-                # epoch = None if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
-                epoch = 0 if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
-                period = None if period is None or (isinstance(period, float) and isnan(period)) else period
+            # if hasattr(res, 'catalog_info'):
+            #     # res.catalog_info.replace({float('nan'): None}, inplace=True)
+            #     epoch = getattr(res.catalog_info, 'epoch', [None])[0]
+            #     period = getattr(res.catalog_info, 'period', [None])[0]
+            #     # epoch = None if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
+            #     epoch = 0 if epoch is None or (isinstance(epoch, float) and isnan(epoch)) else epoch
+            #     period = None if period is None or (isinstance(period, float) and isnan(period)) else period
         except DBException:
             raise
         except Exception as e:
-            logging.warning(f'request_asassn request lightcurve exception {e}')
+            logging.warning(f'request_asassn request df_lc exception {e}')
             raise DBException(f'It seems that the star Gaia DR3 {gaia_id} was not found in the ASAS-SN database')
         # client.catalogs.master_list
-        _store_in_cache(gaia_id, lc_df, epoch, period)
+        _store_in_cache(caching_name, lc_df, epoch, period)
 
     # mask = lc_df['phot_filter']
     try:
@@ -108,11 +135,11 @@ def load_asassn_lightcurve(gaia_id: int, band='g', force_update=False) -> CurveD
         lcd = CurveDash(gaia_id=gaia_id,
                         jd=df['jd'], flux=df['flux'], flux_err=df['flux_err'],
                         band=band,
-                        timescale='hjd',    # todo Check
+                        timescale='hjd',  # todo Check
                         epoch=epoch,
                         period=period, period_unit=str(day))
 
-        # lightcurve = cook_lightcurve(df, timescale='tcg',
+        # df_lc = cook_lightcurve(df, timescale='tcg',
         #                              flux_unit='', flux_err_unit='',
         #                              epoch_jd=epoch, period_day=period)
         # period_unit = None if not period else 'day'

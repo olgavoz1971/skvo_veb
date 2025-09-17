@@ -23,9 +23,9 @@ row_class_name = "d-flex g-2 justify-content-end align-items-end"
 
 def layout(source_id=None, band='G'):
     if source_id is None:
-        header_txt = 'Request Gaia lightcurve'
+        header_txt = 'Request Gaia df_lc'
     else:
-        header_txt = f'Gaia lightcurve\n{source_id} {band}'
+        header_txt = f'Gaia df_lc\n{source_id} {band}'
     # header = html.Div(id='h1-gaia', children=[html.H1(h1_txt, className='text-primary text-left fs-3'),
     #                                             html.H2(header_txt, className='text-primary text-left fs-3')])
     header = html.H1(header_txt, id='h1-gaia',
@@ -94,7 +94,7 @@ def layout(source_id=None, band='G'):
                                   figure=fig,
                                   config={'displaylogo': False}),
                     ], class_name="g-0"),  # Graph
-                ], md=12, sm=12),  # width={'size': 8, 'offset': 0, 'order': 1}),  # lightcurve Graph
+                ], md=12, sm=12),  # width={'size': 8, 'offset': 0, 'order': 1}),  # df_lc Graph
             ], class_name="g-0"),  # g-0 -- Row without 'gutters'       # Lightcurve stuff
             dbc.Row([
                 dcc.Markdown('_**Click on a point to select it, or use Lasso or Box selector**_',
@@ -131,6 +131,7 @@ def layout(source_id=None, band='G'):
 def _load_lightcurve(source_id: str, band: str) -> CurveDash:
     gaia_id = decipher_source_id(source_id)  # M.b. long remote call. Or m.b. not
     lcd = request_gaia.load_gaia_lightcurve(gaia_id, band)
+    lcd.lightcurve.dropna(subset=['flux'], inplace=True)
     return lcd
 
 
@@ -157,10 +158,10 @@ def load_new_source(_1, _2, source_id, band, phase_view):
 
     if source_id is None or source_id == '':
         raise PreventUpdate
-    # jdict = {'lightcurve': {}, 'metadata': {}}
+    # jdict = {'df_lc': {}, 'metadata': {}}
     prefix = 'GAIA DR3' if is_like_gaia_id(source_id) else ''
     # header_txt = f'{prefix} {source_id} {band}'
-    title = 'Gaia lightcurve'
+    title = 'Gaia df_lc'
     header_txt = html.Span([f'{title} {prefix} {source_id}  ', html.Em(band)])
     try:
         logging.info(f'Load source data from gaia db: {source_id=}')
@@ -198,7 +199,7 @@ def load_new_source(_1, _2, source_id, band, phase_view):
                   div_alert_style=alert_style, alert_message=alert_message,
                   lc=lc)
     # return (header_txt, content_style, alert_style, alert_message,
-    #         handler.serialise(jdict['lightcurve']),
+    #         handler.serialise(jdict['df_lc']),
     #         handler.serialise(jdict['metadata']))
     return output
 

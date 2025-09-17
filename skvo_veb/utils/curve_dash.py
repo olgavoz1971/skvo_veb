@@ -6,12 +6,14 @@ import pandas
 import pandas as pd
 import json
 
+from astropy.io.ascii import InconsistentTableError
+from astropy.io.registry import IORegistryError
 from astropy.table import Table
 from astropy.time import Time
 
 try:
     # noinspection PyUnresolvedReferences
-    from skvo_veb.utils.my_tools import PipeException
+    from skvo_veb.utils.my_tools import PipeException, DataStructureException
 except ImportError:
     # noinspection PyUnresolvedReferences
     from utils import PipeException
@@ -33,7 +35,7 @@ def astropy_init(unit_str: str):
 
 class CurveDash:
     """
-    Class deals with lightcurve data. It stores, saves, serializes and restores lightcurves with units
+    Class deals with df_lc data. It stores, saves, serializes and restores lightcurves with units
     and related metadata. Lightcurve is stored as pandas.DataFrame
     """
 
@@ -54,10 +56,33 @@ class CurveDash:
         'pandas.json': 'json'
     }
 
+    _format_dict_dat = {
+        'csv': 'csv',
+        'ascii': 'dat',
+        'ascii.commented_header': 'dat',
+        'ascii.fixed_width': 'dat',
+        'html': 'html',
+        'ascii.html': 'html',
+        'pandas.csv': 'csv',
+        'pandas.json': 'json'
+    }
+
     # Combine both dictionaries into a single class-level dictionary
     # format_dict = {**_format_dict_text, **_format_dict_bytes}
     format_dict = _format_dict_text | _format_dict_bytes
-    extension_dict = {v: k for k, v in format_dict.items()}
+
+    _json_format_list = ['pandas.json']
+    _fits_format_list = ['fits', 'fit']
+
+    # extension_dict = {v: k for k, v in format_dict.items()}   # Ambiguous ;-(
+    extension_dict = {
+        'csv': 'csv',
+        'dat': 'ascii.commented_header',  # just because I like this particular type of the "dat" format
+        'html': 'html',
+        'json': 'pandas.json',
+        'fits': 'fits',
+        'fit': 'fits'
+    }
 
     def __init__(self, jd=None, flux=None, flux_err=None, label=None,
                  flux_correction: str | None = None, zero_point=0.0,
@@ -70,11 +95,11 @@ class CurveDash:
                  epoch: float | None = jd0,
                  cross_ident=None, folded_view=0, mag_view=0):
         """
-        Initializes an instance of the class, allowing the creation of a lightcurve
+        Initializes an instance of the class, allowing the creation of a df_lc
         directly from lists of time (jd) and flux values. The initialized
-        object will have a lightcurve attribute defined as a Pandas DataFrame
+        object will have a df_lc attribute defined as a Pandas DataFrame
 
-        :param jd: A column of Julian dates representing time points of the lightcurve.
+        :param jd: A column of Julian dates representing time points of the df_lc.
             Only used if `js_lightcurve` is not provided.
         :param flux: A column of flux values corresponding to the Julian dates in `jd`.
             Only used if `js_lightcurve` is not provided.
@@ -101,7 +126,10 @@ class CurveDash:
                 raise PipeException('The lengths of the label and flux arrays differ. '
                                     'Please check the input light curve')
 
-            df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err, 'label': label})
+            # df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err, 'label': label})
+            t = Table({'jd': jd, 'flux': flux, 'flux_err': flux_err, 'label': label})
+            df = t.to_pandas()
+            # df = pd.DataFrame({'jd': jd, 'flux': flux, 'flux_err': flux_err, 'label': label})
 
             # Clean bad fluxes for the following log and division operations
             # NaN is used to mark bad values because it is ignored by most statistical functions
@@ -142,9 +170,9 @@ class CurveDash:
     @classmethod
     def from_serialized(cls, serialized: str):
         """
-        Initializes an instance of the class, allowing the recreation of a lightcurve from a
+        Initializes an instance of the class, allowing the recreation of a df_lc from a
         JSON string. This is useful for restoring an object from dcc.Store data
-        :param serialized: A JSON string representation of the lightcurve data.
+        :param serialized: A JSON string representation of the df_lc data.
         :type serialized: str
         """
         try:
@@ -154,7 +182,7 @@ class CurveDash:
             di = json.loads(serialized)
             if not di:  # empty dictionary
                 return self  # create an empty lcd
-            lightcurve_dict = di.get('lightcurve')
+            lightcurve_dict = di.get('df_lc')
             self.lightcurve = pd.DataFrame(data=lightcurve_dict['data'], columns=lightcurve_dict['columns'])
             self.metadata = di.get('metadata')
             return self
@@ -162,16 +190,58 @@ class CurveDash:
             logging.warning(f'curve_dash.__init__: {e}')
             raise PipeException('CurveDash init: inconsistent serialized data')
 
+    @staticmethod
+    def _read_table(file_obj: io.BytesIO, extension: str) -> Table:
+        format_by_extension = CurveDash.get_table_format(extension)
+        if format_by_extension in CurveDash._json_format_list:
+            formats_to_try = [format_by_extension, None, 'ascii.commented_header', 'ascii']  # Order does matter
+        else:
+            formats_to_try = [None, 'ascii.commented_header', 'ascii', format_by_extension]
+        for fmt in formats_to_try:
+            try:
+                tab = Table.read(file_obj, format=fmt) if fmt else Table.read(file_obj)
+                break
+            except (IORegistryError, InconsistentTableError):
+                continue
+        else:  # Sorry (
+            raise DataStructureException("Unable to determine data format from file extension")
+        # Replace all 'Undefined' values in metadata with None
+        if format_by_extension in CurveDash._fits_format_list:
+            from astropy.io.fits.card import Undefined
+            # Replace all 'Undefined' values in metadata with None
+            meta = {k: (None if isinstance(v, Undefined) else v) for k, v in tab.meta.items()}
+            tab.meta = meta
+        return tab
+
     @classmethod
     def from_file(cls, file_obj: io.BytesIO, extension: str):
-        t = Table.read(file_obj, format=CurveDash.get_table_format(extension))
+        # t = Table.read(file_obj, format=CurveDash.get_table_format(extension))
+        t = CurveDash._read_table(file_obj, extension)
+        if 'flux' not in t.colnames:
+            if 'mag' in t.colnames:
+                mag0 = 25   # todo try to extract this from the input file
+                t['flux'] = 10**(-0.4*(t['mag']-mag0))
+            else:
+                raise DataStructureException("Table must contain 'flux' column")
         flux_unit = str(getattr(t['flux'], 'unit', ''))
         metadata = getattr(t, 'meta', None)
         if 'label' in t.colnames:
             label = t['label']
         else:
             label = None
-        self = cls(jd=t['time'].jd, flux=t['flux'], flux_err=t['flux_err'],
+        if 'flux_err' not in t.colnames:
+            t['flux_err'] = 0
+        if 'jd' in t.colnames:
+            jd = t['jd']
+        elif 'time' in t.colnames:
+            try:
+                jd = t['time'].jd
+            except Exception as e:
+                logging.warning(f'curve_dash:from file: {e}')
+                raise DataStructureException("Inappropriate data type in the 'time' column")
+        else:
+            raise DataStructureException("Table must contain 'jd' or 'time' column")
+        self = cls(jd=jd, flux=t['flux'], flux_err=t['flux_err'],
                    label=label, flux_unit=flux_unit, time_unit='d')
         if metadata:
             self.metadata = self.metadata | metadata
@@ -186,7 +256,7 @@ class CurveDash:
             return '{}'
         lc = self.lightcurve.to_dict(orient='split', index=False)
         metadata = self.metadata
-        return json.dumps({'lightcurve': lc, 'metadata': metadata})
+        return json.dumps({'df_lc': lc, 'metadata': metadata})
 
     @property
     def title(self):
@@ -443,7 +513,6 @@ class CurveDash:
         :return:phase of the folded light curve minimum
         """
         from scipy.optimize import curve_fit
-        # import numpy as np
 
         def gaussian(x_, a, x0, sigma):
             return a * np.exp(-(x_ - x0) ** 2 / (2 * sigma ** 2))
@@ -451,7 +520,7 @@ class CurveDash:
         self.recalc_phase()
         # initial_guess = [max(y), x_[np.argmax(y)], 0.2 * period]
 
-        # Turn upside down the lightcurve to fit a Gaussian into the primary minimum:
+        # Turn upside down the df_lc to fit a Gaussian into the primary minimum:
         x = self.lightcurve['phase']
         y = self.lightcurve['flux'].max() - self.lightcurve['flux']
         initial_guess = [max(y), x[np.argmax(y)], 0.2]
@@ -473,7 +542,6 @@ class CurveDash:
         y_fit = y[mask]
         try:
             # Fit the Gaussian model to the data
-            # res = curve_fit(gaussian, x_fit.to_numpy(), y_fit.to_numpy(),
             popt, pcov, _, _, _ = curve_fit(gaussian, x_fit, y_fit.to_numpy(), p0=initial_guess, full_output=True)
             # res = curve_fit(gaussian, x_fit, y_fit.to_numpy(),
             #                 p0=initial_guess)
@@ -489,7 +557,7 @@ class CurveDash:
     # todo: Rewrite the following methods in JavaScript
     def cut(self, left_border, right_border):
         """
-        Remove a piece of lightcurve between  left_border and right_border along the time axis
+        Remove a piece of df_lc between  left_border and right_border along the time axis
         :param left_border: start_time
         :param right_border: end_time
         """
@@ -498,7 +566,7 @@ class CurveDash:
 
     def keep(self, left_border, right_border):
         """
-        Keep only a piece of lightcurve (remove the rest) between left_border and right_border along the time axis
+        Keep only a piece of df_lc (remove the rest) between left_border and right_border along the time axis
         :param left_border: start_time
         :param right_border: end_time
         """
@@ -515,7 +583,7 @@ class CurveDash:
         """
         import io
         if self.lightcurve is None:
-            raise PipeException(f'CurveDash.download: Empty lightcurve')
+            raise PipeException(f'CurveDash.download: Empty df_lc')
         if table_format in self._format_dict_text:
             my_weird_io = io.StringIO()
         elif table_format in self._format_dict_bytes:
@@ -527,20 +595,23 @@ class CurveDash:
         # u.Unit(self.metadata.get('flux_unit'))
         tab['flux_err'].unit = self.flux_unit_ap
         timescale = self.timescale if self.timescale != 'hjd' else None
-        tab['time'] = Time(tab['jd'], format='jd', scale=timescale)
-        tab.remove_column('jd')
+        # if table_format not in self._format_dict_dat:
+        #     tab['time'] = Time(tab['jd'], format='jd', scale=timescale)
+        #     tab.remove_column('jd')
 
-        if table_format == 'votable' or table_format == 'pandas.json':
-            tab['jd'] = tab['time'].jd
+        if (table_format == 'votable' or table_format == 'pandas.json' or table_format == 'fits'
+                or table_format in self._format_dict_dat):
+            # tab['jd'] = tab['time'].jd
             selected_columns = ['jd', 'phase', 'flux', 'flux_err', 'label']
         else:
+            tab['time'] = Time(tab['jd'], format='jd', scale=timescale)
             selected_columns = ['time', 'phase', 'flux', 'flux_err', 'label']
 
         tab = tab[[col for col in selected_columns if col in tab.colnames]]
         tab.meta = self.metadata
         tab.write(my_weird_io, format=table_format, overwrite=True)
 
-        # self.lightcurve.write(my_weird_io, format=table_format, overwrite=True)
+        # self.df_lc.write(my_weird_io, format=table_format, overwrite=True)
         my_weird_string = my_weird_io.getvalue()
         if isinstance(my_weird_string, str):
             my_weird_string = bytes(my_weird_string, 'utf-8')

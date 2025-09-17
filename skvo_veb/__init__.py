@@ -5,7 +5,7 @@ import flask
 
 from skvo_veb.components import footer
 import logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 from os import getenv
 # from dotenv import load_dotenv
@@ -56,7 +56,10 @@ app.layout = dbc.Container([
             dbc.NavItem(dbc.NavLink(page['name'], href=page['relative_path']))
             for page in dash.page_registry.values() if page.get('in_navbar', False)
         ], brand='VEB Gaia',  # brand_href="#", color="primary",
-            light=True, fluid=True, className="w-100",  # to make sure it is the full width of the Row
+            # light=True,
+            color='light',
+            dark=False,
+            fluid=True, className="w-100",  # to make sure it is the full width of the Row
         ),
     ], className="flex-grow-1"  # to make sure it expands to fill the available horizontal space
     ),

@@ -9,7 +9,7 @@ import dash_bootstrap_components as dbc
 
 from skvo_veb.components import message
 from skvo_veb.utils.curve_dash import CurveDash
-from skvo_veb.utils.my_tools import is_like_gaia_id
+from skvo_veb.utils.my_tools import is_like_gaia_id, DBException
 from skvo_veb.utils.request_asassn import load_asassn_lightcurve
 from skvo_veb.utils.request_gaia import decipher_source_id
 
@@ -24,9 +24,10 @@ row_class_name = "d-flex g-2 justify-content-end align-items-end"
 
 def layout(source_id=None, band='g'):
     if source_id is None:
-        header_txt = 'Request ASAS-SN lightcurve'
+        header_txt = 'Request ASAS-SN df_lc'
     else:
-        header_txt = f'ASAS-SN lightcurve\nGAIA DR3 {source_id} {band}'
+        # header_txt = f'ASAS-SN df_lc\nGAIA DR3 {source_id} {band}'
+        header_txt = f'ASAS-SN df_lc\n{source_id} {band}'
     # header = html.Div(id='h1-asassn', children=[html.H1(h1_txt, className='text-primary text-left fs-3'),
     #                                             html.H2(header_txt, className='text-primary text-left fs-3')])
     header = html.H1(header_txt, id='h1-asassn',
@@ -106,7 +107,7 @@ def layout(source_id=None, band='g'):
                                   figure=fig,
                                   config={'displaylogo': False}),
                     ], class_name="g-0"),  # Graph
-                ], md=12, sm=12),  # width={'size': 8, 'offset': 0, 'order': 1}),  # lightcurve Graph
+                ], md=12, sm=12),  # width={'size': 8, 'offset': 0, 'order': 1}),  # df_lc Graph
             ], class_name="g-0"),  # g-0 -- Row without 'gutters'       # Lightcurve stuff
             dbc.Row([
                 dcc.Markdown('_**Click on a point to select it, or use Lasso or Box selector**_',
@@ -142,8 +143,12 @@ def layout(source_id=None, band='g'):
 
 
 def _load_lightcurve(source_id: str, band: str, force_update=False) -> CurveDash:
-    gaia_id = decipher_source_id(source_id)  # M.b. long remote call. Or m.b. not
-    lcd = load_asassn_lightcurve(gaia_id, band, force_update)
+    try:    # try to find gaia dr3 identifier for this star
+        gaia_id = decipher_source_id(source_id)  # M.b. long remote call. Or m.b. not
+        lcd = load_asassn_lightcurve(gaia_id=gaia_id, band=band, force_update=force_update)
+    except DBException:
+        print('Hmmmm..., ok, let\'s try to query directly by the name')
+        lcd = load_asassn_lightcurve(source_id=source_id, band=band, force_update=force_update)
     return lcd
 
 
@@ -192,10 +197,9 @@ def load_new_source(_1, _2, _3, source_id, band, phase_view):
     switch_asassn_style = {'display': 'block'}
     warning_asassn_style = {'display': 'none'}
 
-    # todo: Ensure we can load the source absent in our Gaia VEB database
     if source_id is None or source_id == '':
         raise PreventUpdate
-    title = 'ASAS-SN lightcurve'
+    title = 'ASAS-SN df_lc'
     prefix = 'GAIA DR3' if is_like_gaia_id(source_id) else ''
     header_txt = html.Span([f'{title} {prefix} {source_id}  ', html.Em(band)])
     try:
@@ -205,6 +209,7 @@ def load_new_source(_1, _2, _3, source_id, band, phase_view):
         else:
             force_update = False
         lcd = _load_lightcurve(source_id, band=band, force_update=force_update)
+        lcd.lightcurve.dropna(subset=['flux'], inplace=True)
         lcd.folded_view = phase_view
 
         # jdict = handler.load_lightcurve(source_id, band, catalogue, force_update)
