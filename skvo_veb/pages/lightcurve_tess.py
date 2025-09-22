@@ -40,8 +40,8 @@ except ImportError:
 register_page(__name__, name='TESS curve old',
               order=4,
               path='/igebc/tess_lc_old',
-              title='TESS df_lc Tool Old',
-              in_navbar=True)
+              title='TESS lightcurve Tool Old',
+              in_navbar=False)
 
 label_font_size = '0.8em'
 switch_label_style = {'display': 'inline-block', 'padding': '2px', 'font-size': label_font_size}
@@ -369,8 +369,8 @@ def layout():
                            }),
             ], tab_id='tess_lc_graph_tab', id='tess_lc_graph_tab', disabled=False),
         ], active_tab='tess_lc_search_tab', id='tess_lc_tabs', style={'marginBottom': '5px'}),
-        dcc.Store(id='store_tess_lightcurve'),  # downloaded df_lc(s)
-        dcc.Store(id='store_tess_lightcurve_metadata'),  # data related to the df_lc search (user's lookup_name)
+        dcc.Store(id='store_tess_lightcurve'),  # downloaded lightcurve(s)
+        dcc.Store(id='store_tess_lightcurve_metadata'),  # data related to the lightcurve search (user's lookup_name)
         dcc.Store(id='store_tess_periodogram_result'),  # [period, 2*period, 4*period]
         dcc.Download(id='download_tess_lc_lightcurve'),
     ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
@@ -502,7 +502,7 @@ def create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method,
         except LightkurveError as e:
             logging.warning(f'download_selected_pixel exception: {e}')
             # Probably, we have the corrupted cache. Let's try clean it
-            # Build the filename of cached df_lc. See lightkurve/search.py
+            # Build the filename of cached lightcurve. See lightkurve/search.py
             # I don't want to change the default cache_dir:
             import os
             # noinspection PyProtectedMember
@@ -1060,7 +1060,7 @@ def download_tess_lc_curve(n_clicks, selected_rows, table_data, stitch, flux_met
     # output['pg_row_style'] = {'display': 'none'}
     try:
         # Store the loaded light curve into dcc.Store
-        output['df_lc'] = create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method, metadata)
+        output['lightcurve'] = create_lc_from_selected_rows(selected_rows, table_data, stitch, flux_method, metadata)
         output['graph_tab_disabled'] = False
         output['active_tab'] = 'tess_lc_graph_tab'
         output['message_results'] = 'Success, switch to the next Tab'
@@ -1259,9 +1259,9 @@ def handle_upload(contents, filename, append, js_lightcurve):
         if append and js_lightcurve:
             lcd_stored = CurveDash.from_serialized(js_lightcurve)
             lcd_stored.append(lcd)
-            output['df_lc'] = lcd_stored.serialize()
+            output['lightcurve'] = lcd_stored.serialize()
         else:
-            output['df_lc'] = lcd.serialize()
+            output['lightcurve'] = lcd.serialize()
         output['graph_tab_disabled'] = False
         output['active_tab'] = 'tess_lc_graph_tab'
         output['message_results'] = 'Success, switch to the next Tab'
@@ -1302,7 +1302,7 @@ if __name__ == '__main__':  # So this is a local version
 #     register_page(__name__, name='TESS curve old',
 #                   order=4,
 #                   path='/igebc/tess_lc_old',
-#                   title='TESS df_lc Tool Old',
+#                   title='TESS Lightcurve Tool Old',
 #                   in_navbar=False)
 #
 #
