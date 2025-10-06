@@ -35,7 +35,7 @@ def astropy_init(unit_str: str):
 
 class CurveDash:
     """
-    Class deals with df_lc data. It stores, saves, serializes and restores lightcurves with units
+    Class deals with lightcurve data. It stores, saves, serializes and restores lightcurves with units
     and related metadata. Lightcurve is stored as pandas.DataFrame
     """
 
@@ -95,11 +95,11 @@ class CurveDash:
                  epoch: float | None = jd0,
                  cross_ident=None, folded_view=0, mag_view=0):
         """
-        Initializes an instance of the class, allowing the creation of a df_lc
+        Initializes an instance of the class, allowing the creation of a lightcurve
         directly from lists of time (jd) and flux values. The initialized
-        object will have a df_lc attribute defined as a Pandas DataFrame
+        object will have a lightcurve attribute defined as a Pandas DataFrame
 
-        :param jd: A column of Julian dates representing time points of the df_lc.
+        :param jd: A column of Julian dates representing time points of the lightcurve.
             Only used if `js_lightcurve` is not provided.
         :param flux: A column of flux values corresponding to the Julian dates in `jd`.
             Only used if `js_lightcurve` is not provided.
@@ -170,9 +170,9 @@ class CurveDash:
     @classmethod
     def from_serialized(cls, serialized: str):
         """
-        Initializes an instance of the class, allowing the recreation of a df_lc from a
+        Initializes an instance of the class, allowing the recreation of a lightcurve from a
         JSON string. This is useful for restoring an object from dcc.Store data
-        :param serialized: A JSON string representation of the df_lc data.
+        :param serialized: A JSON string representation of the lightcurve data.
         :type serialized: str
         """
         try:
@@ -182,7 +182,7 @@ class CurveDash:
             di = json.loads(serialized)
             if not di:  # empty dictionary
                 return self  # create an empty lcd
-            lightcurve_dict = di.get('df_lc')
+            lightcurve_dict = di.get('lightcurve')
             self.lightcurve = pd.DataFrame(data=lightcurve_dict['data'], columns=lightcurve_dict['columns'])
             self.metadata = di.get('metadata')
             return self
@@ -256,7 +256,7 @@ class CurveDash:
             return '{}'
         lc = self.lightcurve.to_dict(orient='split', index=False)
         metadata = self.metadata
-        return json.dumps({'df_lc': lc, 'metadata': metadata})
+        return json.dumps({'lightcurve': lc, 'metadata': metadata})
 
     @property
     def title(self):
@@ -520,7 +520,7 @@ class CurveDash:
         self.recalc_phase()
         # initial_guess = [max(y), x_[np.argmax(y)], 0.2 * period]
 
-        # Turn upside down the df_lc to fit a Gaussian into the primary minimum:
+        # Turn upside down the lightcurve to fit a Gaussian into the primary minimum:
         x = self.lightcurve['phase']
         y = self.lightcurve['flux'].max() - self.lightcurve['flux']
         initial_guess = [max(y), x[np.argmax(y)], 0.2]
@@ -557,7 +557,7 @@ class CurveDash:
     # todo: Rewrite the following methods in JavaScript
     def cut(self, left_border, right_border):
         """
-        Remove a piece of df_lc between  left_border and right_border along the time axis
+        Remove a piece of lightcurve between  left_border and right_border along the time axis
         :param left_border: start_time
         :param right_border: end_time
         """
@@ -566,7 +566,7 @@ class CurveDash:
 
     def keep(self, left_border, right_border):
         """
-        Keep only a piece of df_lc (remove the rest) between left_border and right_border along the time axis
+        Keep only a piece of lightcurve (remove the rest) between left_border and right_border along the time axis
         :param left_border: start_time
         :param right_border: end_time
         """
@@ -583,7 +583,7 @@ class CurveDash:
         """
         import io
         if self.lightcurve is None:
-            raise PipeException(f'CurveDash.download: Empty df_lc')
+            raise PipeException(f'CurveDash.download: Empty lightcurve')
         if table_format in self._format_dict_text:
             my_weird_io = io.StringIO()
         elif table_format in self._format_dict_bytes:
@@ -611,7 +611,7 @@ class CurveDash:
         tab.meta = self.metadata
         tab.write(my_weird_io, format=table_format, overwrite=True)
 
-        # self.df_lc.write(my_weird_io, format=table_format, overwrite=True)
+        # self.lightcurve.write(my_weird_io, format=table_format, overwrite=True)
         my_weird_string = my_weird_io.getvalue()
         if isinstance(my_weird_string, str):
             my_weird_string = bytes(my_weird_string, 'utf-8')
