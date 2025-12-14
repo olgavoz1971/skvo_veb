@@ -68,7 +68,7 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
     if not force_update:
         lc_df, epoch, period = _load_from_cache(caching_name)
         if lc_df is not None and lc_df.empty:
-            raise DBException(f'Gaia DR3 {gaia_id} was not found in the cached ASAS-SN database\n'
+            raise DBException(f'{caching_name} was not found in the cached ASAS-SN database\n'
                               f'Consider forcing a fetch if the data is really needed')
     if lc_df is None:  # Try to load it from the remote database:
         try:
@@ -110,7 +110,7 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
                 lc_df = res.data
             if lc_df is None or lc_df.empty:
                 _store_in_cache(caching_name, pd.DataFrame())
-                raise DBException(f'The source Gaia DR3 {gaia_id} was not found in the ASAS-SN database')
+                raise DBException(f'The source {caching_name} was not found in the ASAS-SN database')
             # if hasattr(res, 'catalog_info'):
             #     # res.catalog_info.replace({float('nan'): None}, inplace=True)
             #     epoch = getattr(res.catalog_info, 'epoch', [None])[0]
@@ -122,7 +122,7 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
             raise
         except Exception as e:
             logging.warning(f'request_asassn request df_lc exception {e}')
-            raise DBException(f'It seems that the star Gaia DR3 {gaia_id} was not found in the ASAS-SN database')
+            raise DBException(f'It seems that the star {caching_name} was not found in the ASAS-SN database')
         # client.catalogs.master_list
         _store_in_cache(caching_name, lc_df, epoch, period)
 
@@ -146,7 +146,7 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
         # metadata = {'gaia_id': gaia_id, 'epoch': epoch, 'period': period, 'period_unit': period_unit, 'band': band}
     except Exception as e:
         logging.error(f'load_asassn_lightcurve exception: {type(e).__name__} {e}')
-        raise PipeException(f'GAIA DR3 {gaia_id}: ASAS-SN data structure is invalid')
+        raise PipeException(f'{caching_name}: ASAS-SN data structure is invalid')
     return lcd
 
 

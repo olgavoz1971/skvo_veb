@@ -23,14 +23,14 @@ from lightkurve.correctors import PLDCorrector
 try:
     from skvo_veb.components import message
     from skvo_veb.utils import tess_cache as cache
-    from skvo_veb.utils.curve_dash import CurveDash
+    from skvo_veb.utils.curve_dash import CurveDash, jd0
     from skvo_veb.utils.my_tools import PipeException, safe_none, log_gamma, sanitize_filename, positive_float_pattern
 except ImportError:  # LOCAL_VERSION
     import message  # todo rename this, give him more specific name
     # noinspection PyUnresolvedReferences
     import tess_cache as cache
     # noinspection PyUnresolvedReferences
-    from curve_dash import CurveDash
+    from curve_dash import CurveDash, jd0
     # noinspection PyUnresolvedReferences
     from utils import PipeException, safe_none, log_gamma, sanitize_filename, positive_float_pattern
     # todo rename utils, give him more specific name
@@ -1032,7 +1032,8 @@ clientside_callback(
 
 def create_lightcurve_figure(js_lightcurve: str | None, lc_metadata: dict = None):
     lcd = CurveDash.from_serialized(js_lightcurve)
-    xaxis_title = f'time, {safe_none(lcd.time_unit)}'
+    # xaxis_title = f'time, {safe_none(lcd.time_unit)}'
+    xaxis_title = f'jd-{jd0}, {safe_none(lcd.time_unit)} {lcd.timescale}'
     yaxis_title = f'flux {safe_none(lcd.flux_correction)}, {safe_none(lcd.flux_unit)}'
 
     xrange_left = xrange_right = yrange_left = yrange_right = None
@@ -1044,7 +1045,8 @@ def create_lightcurve_figure(js_lightcurve: str | None, lc_metadata: dict = None
     title = lcd.title
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=lcd.jd, y=lcd.flux,
+    x = lcd.jd - jd0 if lcd.jd is not None else lcd.jd
+    fig.add_trace(go.Scatter(x=x, y=lcd.flux,
                              hoverinfo='none',  # Important
                              hovertemplate=None,
                              mode='markers+lines',
@@ -1124,7 +1126,7 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
 
         quality_mask = lc['quality'] == 0  # mask by TESS quality
         lc = lc[quality_mask]
-        jd = lc.time.value + jd0_tess
+        jd = lc.time.value  # + jd0_tess
         flux_unit = str(lc.flux.unit)
         flux_err = lc.flux_err  # todo: take into account background errors?
         flux_correction = []
@@ -1169,12 +1171,13 @@ def create_lightcurve(n_clicks, pixel_metadata, mask_list, star_number, sub_bkg,
             # flux = corrected_lc.flux
             # jd = corrected_lc.time.value
 
-        time_unit = lc.time.format
+        # time_unit = lc.time.format
+        time_unit = 'mjd'
 
         name = lc.LABEL if lc.LABEL else pixel_metadata.get('target', '')
 
         sector_array = np.full_like(lc.time.value, fill_value=lc.SECTOR, dtype=np.uint8)   # mark it somehow
-        lcd = CurveDash(jd=jd, flux=flux, flux_err=flux_err,
+        lcd = CurveDash(jd=jd + jd0_tess, flux=flux, flux_err=flux_err,
                         name=name, label=sector_array, lookup_name=pixel_metadata.get('lookup_name', None),
                         time_unit=time_unit, timescale='tdb',
                         flux_unit=flux_unit, flux_correction=' '.join(flux_correction))
@@ -1297,7 +1300,7 @@ def plot_difference(n_clicks, jsons_1, jsons_2, comparison_method):
             title = 'Curve1 - Curve2'
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=jd_common, y=flux,
+        fig.add_trace(go.Scatter(x=jd_common - jd0, y=flux,
                                  hoverinfo='none',  # Important
                                  hovertemplate=None,
                                  mode='markers+lines',
@@ -1306,7 +1309,9 @@ def plot_difference(n_clicks, jsons_1, jsons_2, comparison_method):
         fig.update_layout(title=title,
                           showlegend=False,
                           margin=dict(l=0, b=20, t=30, r=20),
-                          xaxis_title=f'time, {safe_none(lcd1.time_unit)}',
+                          # xaxis_title=f'time, {safe_none(lcd1.time_unit)}',
+                          xaxis_title=f'jd-{jd0}, {safe_none(lcd1.time_unit)} {lcd1.timescale}',
+                          # xaxis_title=f'time, {safe_none(lcd1.time_unit)}',
                           yaxis_title=f'flux',
                           # xaxis={'dtick': 1000},
                           # 'showticklabels': False},# todo tune it

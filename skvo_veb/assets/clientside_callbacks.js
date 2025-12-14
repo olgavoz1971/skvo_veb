@@ -6,10 +6,11 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
         plotLightcurveFromStore: function(dataString, figure) {
             console.log('Updating figure from dcc.Store data');
-            // console.log('dataString =', dataString);
+//             console.log('dataString =', dataString);
             try {
                 // Parse the JSON string stored in dcc.Store into an object
                 let fullData = JSON.parse(dataString);
+                // console.log('fullData =', fullData)
                 // Extract the lightcurve DataFrame from the nested structure
                 let lightcurve = fullData.lightcurve;
                 // Extract metadata from the nested structure
@@ -47,7 +48,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
                 } else {
                     xColIndex = columns.indexOf('jd');     // Otherwise, use 'jd' for time
-                    const jd0 = 2450000;
+                    const jd0 = 2400000.5;
                     xaxis_title = `jd-${jd0}`;
                     newX = rows.map(row => row[xColIndex] - jd0);  // Subtract jd0 from each value
                 }

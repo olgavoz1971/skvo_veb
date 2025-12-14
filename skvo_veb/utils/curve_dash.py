@@ -20,7 +20,7 @@ except ImportError:
 
 from astropy import units as u
 
-jd0 = 2450000
+jd0 = 2400000.5
 fill_nans = 'median'
 
 
