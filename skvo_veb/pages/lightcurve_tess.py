@@ -39,7 +39,7 @@ except ImportError:
 
 register_page(__name__, name='TESS curve old',
               order=4,
-              path='/igebc/tess_lc_old',
+              path='/tess_lc_old',
               title='TESS lightcurve Tool Old',
               in_navbar=False)
 

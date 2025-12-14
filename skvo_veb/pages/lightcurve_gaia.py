@@ -14,7 +14,7 @@ from skvo_veb.utils.request_gaia import decipher_source_id
 
 register_page(__name__, name='Gaia Lightcurve',
               order=1,
-              path='/igebc/gaia',
+              path='/gaia',
               title='IGEBC: Gaia Lightcurve',
               in_navbar=False)
 

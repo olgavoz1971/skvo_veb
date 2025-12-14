@@ -13,7 +13,7 @@ app_color = {"graph_bg": '#A3E4D7', "graph_line": "#007ACE"}
 app_margins = {'left': 20, 'right': 20, 'top': 20, 'bottom': 20}
 
 register_page(__name__, name='Characteristic Curve',
-              path='/igebc/cc',
+              path='/cc',
               title='Characteristic Curve Tool',
               in_navbar=False)
 

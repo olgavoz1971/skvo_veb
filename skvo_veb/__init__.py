@@ -45,7 +45,7 @@ else:
     background_callback_manager = DiskcacheManager(diskcache.Cache(diskcache_dir))
 
 
-app = Dash(__name__, server=server, use_pages=True,
+app = Dash(__name__, server=server, use_pages=True, url_base_pathname='/igebc/',  # requests_pathname_prefix='/igebc/',	# url_base_pathname='/igebc/',
            background_callback_manager=background_callback_manager, suppress_callback_exceptions=True)
 # todo replace it with app.validation_layout
 app.title = 'Gaia VEB lightcurves Dashboard'

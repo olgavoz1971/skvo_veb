@@ -15,7 +15,7 @@ from skvo_veb.utils.request_gaia import decipher_source_id
 
 register_page(__name__, name='ASAS-SN',
               order=2,
-              path='/igebc/asassn',
+              path='/asassn',
               title='IGEBC: ASAS-SN Lightcurve',
               in_navbar=True)
 
@@ -24,10 +24,10 @@ row_class_name = "d-flex g-2 justify-content-end align-items-end"
 
 def layout(source_id=None, band='g'):
     if source_id is None:
-        header_txt = 'Request ASAS-SN df_lc'
+        header_txt = 'Request ASAS-SN lightcurve'
     else:
-        # header_txt = f'ASAS-SN df_lc\nGAIA DR3 {source_id} {band}'
-        header_txt = f'ASAS-SN df_lc\n{source_id} {band}'
+        # header_txt = f'ASAS-SN lightcurve\nGAIA DR3 {source_id} {band}'
+        header_txt = f'ASAS-SN lightcurve\n{source_id} {band}'
     # header = html.Div(id='h1-asassn', children=[html.H1(h1_txt, className='text-primary text-left fs-3'),
     #                                             html.H2(header_txt, className='text-primary text-left fs-3')])
     header = html.H1(header_txt, id='h1-asassn',
@@ -107,7 +107,7 @@ def layout(source_id=None, band='g'):
                                   figure=fig,
                                   config={'displaylogo': False}),
                     ], class_name="g-0"),  # Graph
-                ], md=12, sm=12),  # width={'size': 8, 'offset': 0, 'order': 1}),  # df_lc Graph
+                ], md=12, sm=12),  # width={'size': 8, 'offset': 0, 'order': 1}),  # lightcurve Graph
             ], class_name="g-0"),  # g-0 -- Row without 'gutters'       # Lightcurve stuff
             dbc.Row([
                 dcc.Markdown('_**Click on a point to select it, or use Lasso or Box selector**_',
@@ -199,7 +199,7 @@ def load_new_source(_1, _2, _3, source_id, band, phase_view):
 
     if source_id is None or source_id == '':
         raise PreventUpdate
-    title = 'ASAS-SN df_lc'
+    title = 'ASAS-SN lightcurve'
     prefix = 'GAIA DR3' if is_like_gaia_id(source_id) else ''
     header_txt = html.Span([f'{title} {prefix} {source_id}  ', html.Em(band)])
     try:

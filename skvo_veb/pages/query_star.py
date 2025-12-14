@@ -13,7 +13,7 @@ from skvo_veb.utils.my_tools import timeit
 from skvo_veb.utils.request_gaia import decipher_source_id
 
 dash.register_page(__name__,
-                   path='/igebc/star',
+                   path='/star',
                    title='IGEBC: Source parameters',
                    in_navbar=False,
                    name='Search results')

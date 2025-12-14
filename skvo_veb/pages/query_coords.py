@@ -20,7 +20,7 @@ register_page(__name__, name='Query by coordinates',
               title='IGEBC: Query by coordinates',
               description='Query by coordinates description',
               in_navbar=False,
-              path='/igebc/coo')
+              path='/coo')
 
 
 def load_cone(coord_str: str, radius: str, catalogue):

@@ -37,7 +37,7 @@ except ImportError:  # LOCAL_VERSION
 
 register_page(__name__, name='TESS cutout',
               order=3,
-              path='/igebc/tess',
+              path='/tess',
               title='TESS cutout Tool',
               in_navbar=True)
 

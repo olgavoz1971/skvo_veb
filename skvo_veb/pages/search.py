@@ -11,7 +11,7 @@ dash.register_page(__name__, name='Search',
                    title='IGEBC: search',
                    description='Search through local DataBase description',
                    in_navbar=True,
-                   path='/igebc/search')
+                   path='/search')
 
 query_id_coord = dbc.Stack([
     dbc.Row([

@@ -52,7 +52,7 @@ except ImportError:
 
 register_page(__name__, name='TESS curve',
               order=4,
-              path='/igebc/tess_lc',
+              path='/tess_lc',
               title='TESS Lightcurve Tool',
               in_navbar=True)
 

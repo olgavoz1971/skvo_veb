@@ -8,7 +8,7 @@ dash.register_page(__name__, name='Home',
                    title='IGEBC - Interactive Gaia Eclipsing Binary Catalog',
                    description='Gaia Eclipsing Binary Catalog Main Page',
                    in_navbar=True,
-                   path='/igebc')
+                   path='/')
 
 
 @timeit
