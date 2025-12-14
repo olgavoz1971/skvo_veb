@@ -1,4 +1,7 @@
 import logging
+from os import getenv
+logging.basicConfig(filename=getenv('APP_LOG'), level=logging.INFO)
+
 import re
 
 from astropy.coordinates import Angle

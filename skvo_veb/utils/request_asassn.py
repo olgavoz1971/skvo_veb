@@ -13,6 +13,9 @@ from pyasassn.client import SkyPatrolClient
 from skvo_veb.utils.curve_dash import CurveDash
 from skvo_veb.utils.my_tools import DBException, timeit, PipeException
 
+logging.basicConfig(filename=os.getenv('APP_LOG'), level=logging.INFO)
+
+
 # http://asas-sn.ifa.hawaii.edu/documentation/getting_started.html
 gaia_id_DP_Peg = 1791119426789765632
 gaia_id_no_data = 1791119426789765630
@@ -52,7 +55,7 @@ def _store_in_cache(source_id, df: pandas.DataFrame, epoch: float | None = None,
         df.attrs['period'] = period
         df.to_pickle(path_to_cached_data)
     except Exception as e:
-        logging.warning(f'Store Asas-SN df_lc in cache: {e}')
+        logging.info(f'Store Asas-SN lightcurve in cache: {e}')
 
 
 @timeit
@@ -121,7 +124,7 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
         except DBException:
             raise
         except Exception as e:
-            logging.warning(f'request_asassn request df_lc exception {e}')
+            logging.warning(f'request_asassn request lightcurve exception {e}')
             raise DBException(f'It seems that the star {caching_name} was not found in the ASAS-SN database')
         # client.catalogs.master_list
         _store_in_cache(caching_name, lc_df, epoch, period)
@@ -129,6 +132,8 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
     # mask = lc_df['phot_filter']
     try:
         df = lc_df[lc_df['phot_filter'] == band][['jd', 'flux', 'flux_err']]
+        if df.empty:
+            raise DBException(f'It seems that the star {caching_name} has no observations with {band} filter')
         if os.getenv('CUT_ASASSN'):  # for debugging
             df = df[:5]
 
@@ -139,11 +144,13 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
                         epoch=epoch,
                         period=period, period_unit=str(day))
 
-        # df_lc = cook_lightcurve(df, timescale='tcg',
+        # lc = cook_lightcurve(df, timescale='tcg',
         #                              flux_unit='', flux_err_unit='',
         #                              epoch_jd=epoch, period_day=period)
         # period_unit = None if not period else 'day'
         # metadata = {'gaia_id': gaia_id, 'epoch': epoch, 'period': period, 'period_unit': period_unit, 'band': band}
+    except DBException:
+        raise
     except Exception as e:
         logging.error(f'load_asassn_lightcurve exception: {type(e).__name__} {e}')
         raise PipeException(f'{caching_name}: ASAS-SN data structure is invalid')

@@ -1,6 +1,7 @@
 import logging
-
 from os import getenv
+logging.basicConfig(filename=getenv('APP_LOG'), level=logging.INFO)
+
 import astropy.units as u
 # noinspection PyUnresolvedReferences
 from astropy.units import deg, hourangle, day, electron

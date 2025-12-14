@@ -2,6 +2,9 @@
 DISK_CACHE = False
 
 import logging
+from os import getenv
+logging.basicConfig(filename=getenv('APP_LOG'), level=logging.INFO)
+
 import aladin_lite_react_component
 import astropy.units as u
 import dash_bootstrap_components as dbc
@@ -209,7 +212,7 @@ def layout():
                     ], md=2, sm=4, style={'padding': '10px', 'background': 'Silver', 'border-radius': '5px'}),  # tools
                     dbc.Col([
                         dcc.Markdown(
-                            '_**Select mask and build the df_lc**_:\n'
+                            '_**Select mask and build the lightcurve**_:\n'
                             '* Click on a star in the **Aladin** applet to mark it on the pixel image\n'
                             '* **Handmade Mask:** Click on a pixel to set/unset mask\n'
                             '* **Auto-mask:** Click on a pixel to create a threshold mask around it\n'
@@ -409,15 +412,15 @@ def layout():
             id='tess_tabs', style={'marginBottom': '5px'}),
         dcc.Store(id='store_search_result'),  # things showed in the data table (the list of TESS sectors etc.)
         dcc.Store(id='store_pixel_metadata'),  # stuff for recreation the current pixel
-        dcc.Store(id='mask_store'),  # mask for df_lc calculation from cutouts
+        dcc.Store(id='mask_store'),  # mask for lightcurve calculation from cutouts
         dcc.Store(id='mask_slow_store'),  # for more complex mask operation, performed on the server side
         dcc.Store(id='mask_fast_store'),  # mask changed on client side
         dcc.Store(id='wcs_store'),  # store wcs to sync with Aladin applet
-        dcc.Store(id='store_tess_cutout_lightcurve'),  # user's df_lc is here
+        dcc.Store(id='store_tess_cutout_lightcurve'),  # user's lightcurve is here
         dcc.Store(id='store_tess_cutout_lightcurve_metadata'),
         # extra information on lightcurve_1 (current zoom ranges)
-        dcc.Store(id='lc2_store'),  # the second df_lc is here
-        dcc.Store(id='lc3_store'),  # the third df_lc is here
+        dcc.Store(id='lc2_store'),  # the second lightcurve is here
+        dcc.Store(id='lc3_store'),  # the third lightcurve is here
         dcc.Download(id='download_tess_lightcurve'),
     ], className="g-10", fluid=True, style={'display': 'flex', 'flexDirection': 'column'})
     return res
@@ -760,7 +763,7 @@ def download_selected_pixel(selected_rows, table_data, search_result_di, size):
             import os
             logging.warning(f'download_selected_pixel exception: {e}')
             # Probably, we have the corrupted cache. Let's try clean it
-            # Build the filename of cached df_lc. See lightkurve/search.py
+            # Build the filename of cached lightcurve. See lightkurve/search.py
             # Sorry, but I don't want to change the default cache_dir:
             # noinspection PyProtectedMember
             download_dir = pixel[pixel_args['#']]._default_download_dir()
@@ -1408,7 +1411,7 @@ def mark_star(coord, fig, wcs_dict):
     running=[(Output('search_tess_button', 'disabled'), True, False),
              (Output('cancel_search_tess_button', 'disabled'), False, True),
              (Output('download_sector_result', 'children'),
-              'I\'m working... Please wait', 'Press Download to get the df_lc')],
+              'I\'m working... Please wait', 'Press Download to get the lightcurve')],
     cancel=[Input('cancel_search_tess_button', 'n_clicks')],
     background=background_callback,
     prevent_initial_call=True
@@ -1417,7 +1420,7 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
     # """
     # Note: It might seem odd that I set an active accordionItem in this callback.
     # Actually, I need to start the application with all accordionItems open to prevent
-    # unpleasant flickering during the initial loading of the df_lc.
+    # unpleasant flickering during the initial loading of the lightcurve.
     # Here, I simply close all items except the first one.
     # """
     if n_clicks is None:
@@ -1461,7 +1464,7 @@ def search(n_clicks, pixel_type, obj_name, ra, dec, radius):
         output['content_style'] = {'display': 'block'}  # show the table
         output['alert_style'] = {'display': 'none'}  # hide the alert
         output['alert_message'] = ''
-        # set_props('download_sector_result', {'children': 'Press Download to get the df_lc'})
+        # set_props('download_sector_result', {'children': 'Press Download to get the lightcurve'})
 
     except Exception as e:
         logging.warning(f'tess_cutout.search: {e}')
@@ -1528,8 +1531,8 @@ def download_tess_lightcurve(n_clicks, js_lightcurve, table_format, relayout_dat
 # def handle_selection(_1, _2, selected_data, js_lightcurve):
 def handle_selection(_1, selected_data, js_lightcurve):
     """
-    Remove a selected piece of df_lc
-    Can be applied only to df_lc 1
+    Remove a selected piece of lightcurve
+    Can be applied only to lightcurve 1
     """
     # if _1 is None and _2 is None:
     if _1 is None:
@@ -1568,8 +1571,8 @@ def handle_selection(_1, selected_data, js_lightcurve):
 # )
 # def handle_zoom_123(_1, relayout_data, js_lightcurve):
 #     """
-#     Remove a selected piece of df_lc
-#     Can be applied only to df_lc 1
+#     Remove a selected piece of lightcurve
+#     Can be applied only to lightcurve 1
 #     """
 #     if _1 is None:
 #         raise PreventUpdate

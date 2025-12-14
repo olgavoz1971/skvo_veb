@@ -2,6 +2,9 @@
 DISK_CACHE = False
 
 import logging
+from os import getenv
+logging.basicConfig(filename=getenv('APP_LOG'), level=logging.INFO)
+
 import base64
 import io
 from pathlib import Path

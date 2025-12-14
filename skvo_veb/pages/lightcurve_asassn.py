@@ -1,4 +1,6 @@
 import logging
+from os import getenv
+logging.basicConfig(filename=getenv('APP_LOG'), level=logging.INFO)
 
 from dash import (register_page, html, dcc, callback, clientside_callback, ClientsideFunction,
                   Input, Output, State, ctx)

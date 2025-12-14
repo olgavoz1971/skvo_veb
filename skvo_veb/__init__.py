@@ -5,9 +5,12 @@ import flask
 
 from skvo_veb.components import footer
 import logging
-logging.basicConfig(level=logging.INFO)
 
 from os import getenv
+
+# logging.basicConfig(filename="/var/www/flask/skvo_veb/log/app.log", level=logging.INFO)
+logging.basicConfig(filename=getenv('APP_LOG'), level=logging.INFO)
+
 # from dotenv import load_dotenv
 
 # load_dotenv()  # Note: it is important to load dotenv here,
