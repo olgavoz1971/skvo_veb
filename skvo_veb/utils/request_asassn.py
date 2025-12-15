@@ -113,6 +113,8 @@ def load_asassn_lightcurve(gaia_id: int | None = None, source_id: str | None = N
                 lc_df = res.data
             if lc_df is None or lc_df.empty:
                 _store_in_cache(caching_name, pd.DataFrame())
+                logging.warning(f'load_asassn_lightcurve: The source {caching_name} '
+                                f'was not found in the ASAS-SN database')
                 raise DBException(f'The source {caching_name} was not found in the ASAS-SN database')
             # if hasattr(res, 'catalog_info'):
             #     # res.catalog_info.replace({float('nan'): None}, inplace=True)

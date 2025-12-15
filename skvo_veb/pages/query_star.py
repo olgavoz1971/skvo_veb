@@ -202,7 +202,7 @@ def layout(source_id='AA%20And'):
         #     item = dbc.AccordionItem(html.Img(width=400, src=image, id='img-graph'), title='Lightcurve fit')
         #     param_items.append(item)
         # except DBException as e:
-        #     logging.info(f'df_lc fit for gaia_id={gaia_id}: repr(e)')
+        #     logging.info(f'lightcurve fit for gaia_id={gaia_id}: repr(e)')
         #     pass
         parameters = dbc.Accordion([item for item in param_items if item is not None],
                                    flush=False, start_collapsed=True)

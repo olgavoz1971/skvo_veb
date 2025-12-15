@@ -270,10 +270,10 @@ def _request_lightcurve_with_metadata(gaia_id: int, band: str) -> CurveDash:
     # metadata['cross_ident'] = cross_ident
 
     #  ------------------------------ Request photometric data --------------------------------------------
-    # We need period and epoch to fold the df_lc
+    # We need period and epoch to fold the lightcurve
     epoch = metadata.get('epoch_gaia', None)
     period = metadata.get('period', None)
-    # df_lc = _request_lightcurve(gaia_id, band, cursor, epoch, period)
+    # lc = _request_lightcurve(gaia_id, band, cursor, epoch, period)
     df = _request_lightcurve(gaia_id, band, cursor)
 
     conn.commit()
@@ -341,7 +341,7 @@ def _request_lightcurve(gaia_id: int, band: str, cursor: psycopg2.extras.RealDic
         df['jdobs'] += jd0_gaia
         df.rename(columns={'jdobs': 'jd'}, inplace=True)
         return df
-        # df_lc = cook_lightcurve(df, timescale='tcb',
+        # lc = cook_lightcurve(df, timescale='tcb',
         #                              flux_unit=str(electron / u.s),
         #                              flux_err_unit=str(electron / u.s),
         #                              epoch_jd=epoch_jd, period_day=period_day)
@@ -349,7 +349,7 @@ def _request_lightcurve(gaia_id: int, band: str, cursor: psycopg2.extras.RealDic
         error_str = f'An exception connected with lightcurve of {gaia_id} occurred: {repr(e)}'
         logging.warning(error_str)
         raise DBException(error_str)
-    # return df_lc
+    # return lc
 
 
 def _debug_get_main_identifier(gaia_id: int) -> str:
@@ -395,7 +395,7 @@ def _debug_load_lightcurve_with_metadata(gaia_id, band) -> CurveDash:
                         epoch=epoch_gaia,
                         period=period, period_unit='d',
                         cross_ident=cross_ident)
-        # df_lc = cook_lightcurve(df, timescale='tcb',
+        # lc = cook_lightcurve(df, timescale='tcb',
         #                              flux_unit=str(electron / u.s),
         #                              flux_err_unit=str(electron / u.s),
         #                              epoch_jd=epoch_gaia, period_day=period)
@@ -404,7 +404,7 @@ def _debug_load_lightcurve_with_metadata(gaia_id, band) -> CurveDash:
         raise DBException(f'Seems like we don\'t have debug data for {gaia_id=} {band=}')
 
     return lcd
-    # return dict(df_lc=df_lc,
+    # return dict(lc=lc,
     #             metadata=dict(gaia_id=gaia_id, period=period, period_unit=period_unit,
     #                           epoch_gaia=epoch_gaia, epoch_new=epoch_new, band=band,
     #                           cross_ident=cross_ident))
