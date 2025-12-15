@@ -1,0 +1,20 @@
+[Unit]
+Description=Celery Worker for skvo_veb
+After=network.target
+
+[Service]
+TimeoutStartSec=120
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/flask
+ExecStart=/var/www/flask/skvo_veb/venv/bin/celery -A skvo_veb.celery_app worker --loglevel=DEBUG --logfile=/var/www/flask/skvo_veb/log/celery.log
+Environment="PATH=/var/www/flask/skvo_veb/venv/bin"
+EnvironmentFile=/var/www/flask/.env
+StandardOutput=append:/var/log/celery.log
+StandardError=append:/var/log/celery.log
+
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
