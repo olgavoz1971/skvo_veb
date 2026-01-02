@@ -52,7 +52,8 @@ else:
 app = Dash(__name__, server=server, use_pages=True, requests_pathname_prefix='/igebc/', 
            background_callback_manager=background_callback_manager, suppress_callback_exceptions=True)
 # todo replace it with app.validation_layout
-app.title = 'Gaia VEB lightcurves Dashboard'
+# app.title = 'Gaia VEB lightcurves Dashboard'
+app.title = 'Variable star lightcurves Dashboard'
 
 app.layout = dbc.Container([
     dbc.Row([
