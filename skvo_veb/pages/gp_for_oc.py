@@ -11,7 +11,7 @@ import numpy as np
 import json
 import pandas as pd
 
-from utils.gp import (GUESS_SIGMA, LEN_MIN,
+from skvo_veb.utils.gp import (GUESS_SIGMA, LEN_MIN,
                       read_lc, load_intervals, add_flux, select_jd_interval, gp_peak_pipeline,
                       NOISE_SCALE_DIVISOR,
                       LENGTH_SCALE_INIT, LENGTH_SCALE_MIN, LENGTH_SCALE_MAX,
@@ -528,7 +528,7 @@ def run_gp(set_progress, n_clicks, lc_json_string, intervals, guess_sigma, ids, 
 
     # 1. Validation: Ensure files are loaded
     if DEBUG:
-        from utils.gp import FILENAME_IN, INTERVALS_FILE, load_intervals_from_file
+        from skvo_veb.utils.gp import FILENAME_IN, INTERVALS_FILE, load_intervals_from_file
         intervals = load_intervals_from_file(INTERVALS_FILE)
         df_lc = read_lc(FILENAME_IN)
         df_lc = add_flux(df_lc)
