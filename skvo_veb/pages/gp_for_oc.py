@@ -641,7 +641,11 @@ def run_gp(set_progress, n_clicks, lc_json_string, intervals, guess_sigma, ids, 
         review_figs.append(dbc.Col([
             html.Div([
                 dbc.Checkbox(id={'type': 'fit-selector', 'index': i}, value=True, label="Keep"),
-                dcc.Graph(figure=res['figure'])  # The saved figure objects
+                dcc.Graph(figure=res['figure'],
+                          config={  # type: ignore
+                            'displaylogo': False,
+                            'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d', 'zoomIn2d', 'zoomOut2d']
+                        })  # The saved figure objects
             ], className="p-2 border rounded")
         ], width=6))
 
