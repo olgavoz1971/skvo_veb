@@ -1,7 +1,7 @@
 DISK_CACHE = True  # todo: change this
 DEBUG = False
 import dash
-from dash import html, dcc, callback, Input, Output, State, ALL
+from dash import html, dcc, callback, Input, Output, State, ALL, callback_context
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 
@@ -12,16 +12,15 @@ import json
 import pandas as pd
 
 from skvo_veb.utils.gp import (GUESS_SIGMA, LEN_MIN,
-                      read_lc, load_intervals, add_flux, select_jd_interval, gp_peak_pipeline,
-                      NOISE_SCALE_DIVISOR,
-                      LENGTH_SCALE_INIT, LENGTH_SCALE_MIN, LENGTH_SCALE_MAX,
-                      WHITE_NOISE_LEVEL_INIT, WHITE_NOISE_LEVEL_MIN, WHITE_NOISE_LEVEL_MAX)
+                               read_lc, load_intervals, add_flux, select_jd_interval, gp_peak_pipeline,
+                               NOISE_SCALE_DIVISOR,
+                               LENGTH_SCALE_INIT, LENGTH_SCALE_MIN, LENGTH_SCALE_MAX,
+                               WHITE_NOISE_LEVEL_INIT, WHITE_NOISE_LEVEL_MIN, WHITE_NOISE_LEVEL_MAX)
 import logging
 import traceback
 from os import getenv
 
 logging.basicConfig(filename=getenv('APP_LOG'), level=logging.INFO)
-
 
 # Gaia Eclipsing Binary Catalog - IGEBC
 dash.register_page(__name__, name='GP',
@@ -139,16 +138,10 @@ def LegendItem(color, label, mode='line'):
 
 # ------  Output Panel (Graphs in a Grid)
 
-content = html.Div([
-    html.H4("Peaks: normalised flux vs JD"),
-    html.Hr(),
-    # Grid for graphs - 2 per row
-    dbc.Row(id='graphs-container')
-], style={"padding": "2rem"})
-
 sidebar = html.Div([
     # html.H4("Control"),  # , className="display-6"),
     # html.Hr(),
+
     html.H6("Legend"),
     LegendItem("black", "Data Points", mode='circle'),
     LegendItem("rgb(31, 119, 180)", "GP Mean", mode='line'),
@@ -211,6 +204,35 @@ sidebar = html.Div([
     # ], style={"padding": "2rem", "backgroundColor": "#f8f9fa", "height": "100vh"})
 ], style={"padding": "10px"})
 
+content = html.Div([
+    html.Div(id='finished-signal', style={'display': 'none'}),  # just as a switch-modes-trigger
+    html.H4("Results: Normalised flux vs JD"),
+    # 1. LIVE VIEW: Shows only graphs, no interactivity
+    dbc.Row(id='live-graphs-container', style={'display': 'flex'}, className="g-2"),
+
+    # 2. FINAL REVIEW: Initially hidden, contains checkboxes + Save button
+    html.Div(id='final-review-container', style={'display': 'none'}, children=[
+        html.Hr(),
+        html.H4("Review and Export"),
+        dbc.Row([
+            dbc.Col(dbc.Button("Select All", id="select-all-btn", size="sm"), width="auto"),
+            dbc.Col(dbc.Button("Unselect All", id="unselect-all-btn", size="sm"), width="auto"),
+            dbc.Col([
+                dbc.InputGroup([
+                    dbc.InputGroupText("Filename"),
+                    dbc.Input(id="export-filename", placeholder="Enter filename...", type="text"),
+                ])
+            ], width=4),
+            # dbc.Col(dbc.Input(id="export-filename", placeholder="filename.dat"), width=3),
+            dbc.Col(dbc.Button("Download Selected", id="save-file-btn",
+                               size="sm", color="success"), width="auto"),
+        ], className="mb-3 g-2 align-items-center"),
+        dbc.Row(id='graphs-container', className="g-2"),
+    ]),
+    dcc.Download(id="download-results"),
+    dcc.Store(id='store-results-data')
+], style={"padding": "2rem"})
+
 
 def layout():
     return dbc.Container([
@@ -228,7 +250,7 @@ def layout():
 # =========== callbacks =============
 
 @callback(
-    # region fold me
+    # region unfold me
     Output('store-lc-data', 'data'),
     Output('upload-lc-text', 'children'),  # Targets the text inside the box
     Input('upload-lc', 'contents'),
@@ -341,28 +363,6 @@ def upload_intervals(contents, filename):
     # return intervals_list
 
 
-@callback(
-    # region fold my
-    Output({'type': 'float-input', 'index': ALL}, 'value'),
-    Output('guess-sigma', 'value'),
-    Input('reset-btn', 'n_clicks'),
-    State({'type': 'float-input', 'index': ALL}, 'id'),
-    prevent_initial_call=True
-    # endregion
-)
-def reset_params(n_clicks, ids):
-    if n_clicks is None:
-        return dash.no_update, dash.no_update
-
-    # 1. Reset floats from the dictionary
-    float_resets = [str(params_float[val_id['index']]) for val_id in ids]
-    # Create a list of return values based on the 'index' stored in the ID
-    # This pulls directly from your global 'params_float' dictionary
-    # 2. Reset the boolean to your default constant
-    return float_resets, GUESS_SIGMA
-    # return [str(params_float[val_id['index']]) for val_id in ids]
-
-
 def create_gp_plot(gp_res, jd_max_guess=None):
     fig = go.Figure()
 
@@ -379,12 +379,12 @@ def create_gp_plot(gp_res, jd_max_guess=None):
     jd_peak_std = gp_res['jd_peak_std']
     peaks_jd = gp_res['peaks_jd']
     mean_peak = gp_res['mean_peak']
-    # n_samples_uncert = gp_res['n_samples_uncert']
+    n_samples_uncert = gp_res['n_samples_uncert']
     # endregion
 
     # 1. Data Points: Custom hover format
     fig.add_trace(go.Scatter(
-        # region fold me
+        # region unfold me
         x=x, y=y,
         mode='markers',
         marker=dict(color='black', size=6),
@@ -503,8 +503,10 @@ def create_gp_plot(gp_res, jd_max_guess=None):
 
 
 @callback(
-    # region fold me
+    # region unfold me
     Output('graphs-container', 'children', allow_duplicate=True),
+    Output('finished-signal', 'children', allow_duplicate=True),  # Final signal
+    Output('store-results-data', 'data'),  # this data will be downloaded by user
     Input('run-btn', 'n_clicks'),
     State('store-lc-data', 'data'),
     State('store-intervals-data', 'data'),
@@ -517,11 +519,14 @@ def create_gp_plot(gp_res, jd_max_guess=None):
         (Output("run-btn", "disabled"), True, False),
         (Output("cancel-btn", "disabled"), False, True),
     ],
-    progress=[Output("graphs-container", "children")],  # Updates UI during execution
+    progress=[Output("live-graphs-container", "children"),
+              Output("finished-signal", "children")],  # Updates UI during execution
+    # this is why we place set_progress between input arguments
     prevent_initial_call=True
     # endregion
 )
 def run_gp(set_progress, n_clicks, lc_json_string, intervals, guess_sigma, ids, float_values):
+    set_progress(([], "WAITING"))
     p = {val_id['index']: float(val) for val_id, val in zip(ids, float_values)}
     # Add a standalone guess_sigma
     p['guess_sigma'] = guess_sigma
@@ -534,92 +539,226 @@ def run_gp(set_progress, n_clicks, lc_json_string, intervals, guess_sigma, ids, 
         df_lc = add_flux(df_lc)
     else:
         if not lc_json_string or not intervals:
-            return dbc.Alert("Please upload both lightcurve and intervals files.", color="warning")
+            error_alert = dbc.Alert("Please upload both lightcurve and intervals files.", color="warning")
+            return error_alert, "FINISHED", None
+            # return dbc.Alert("Please upload both lightcurve and intervals files.", color="warning")
         di = json.loads(lc_json_string)
         df_lc = pd.DataFrame(data=di['data'], columns=di['columns'])
 
-    figs = []
-    i = 0
-    with open('maxima_gp.dat', 'a') as f:
-        for piece in intervals:
-            jd_min, jd_max = piece[0], piece[-1]
-            jd_max_guess = piece[1] if len(piece) > 2 else None
-            # print(f'Start with {jd_min} : {jd_max} piece')
+    live_figs = []
+    results_for_storage = []
 
-            if len(select_jd_interval(df_lc, jd_min, jd_max)) < LEN_MIN:
-                continue
+    for i, piece in enumerate(intervals):
+        jd_min, jd_max = piece[0], piece[-1]
+        jd_max_guess = piece[1] if len(piece) > 2 else None
 
-            try:
-                # --- THE FRAGILE MAGIC ---
-                gp_res = gp_peak_pipeline(df_lc, jd_min, jd_max, params=p)
+        if len(select_jd_interval(df_lc, jd_min, jd_max)) < LEN_MIN:
+            continue
 
-                # Write to file only on success
-                f.write(f'GP peak = {gp_res["jd_peak"]:.6f}  std = {gp_res["jd_peak_std"]:.6f}\n')
+        try:
+            # --- THE FRAGILE MAGIC ---
+            # 1. Calculations
+            gp_res = gp_peak_pipeline(df_lc, jd_min, jd_max, params=p)
 
-                # Create Figure
-                fig = create_gp_plot(gp_res, jd_max_guess=jd_max_guess)
+            # 2. Build "Light Mode" Graph for Live View
+            fig = create_gp_plot(gp_res, jd_max_guess=jd_max_guess)
 
-                # Extract kernel params
-                optimized_kernel = gp_res['gp'].kernel_
-                optimized_params = optimized_kernel.get_params()
-                opt_l = optimized_params.get('k1__k2__length_scale', 0.0)
-                opt_w = optimized_params.get('k2__noise_level', 0.0)
+            # Store data for the final phase
+            results_for_storage.append({'jd_peak': gp_res["jd_peak"],
+                                        'jd_peak_std': gp_res["jd_peak_std"],
+                                        'figure': fig})
+            # Extract kernel params
+            optimized_kernel = gp_res['gp'].kernel_
+            optimized_params = optimized_kernel.get_params()
+            opt_l = optimized_params.get('k1__k2__length_scale', 0.0)
+            opt_w = optimized_params.get('k2__noise_level', 0.0)
 
-                # Define colours
-                l_color = "danger" if (opt_l <= p['length_scale_min'] * 1.01 or
-                                       opt_l >= p['length_scale_max'] * 0.99) else "info"
-                w_color = "danger" if (opt_w <= p['white_noise_level_min'] * 1.01 or
-                                       opt_w >= p['white_noise_level_max'] * 0.99) else "info"
+            # Define colours
+            l_color = "danger" if (opt_l <= p['length_scale_min'] * 1.01 or
+                                   opt_l >= p['length_scale_max'] * 0.99) else "info"
+            w_color = "danger" if (opt_w <= p['white_noise_level_min'] * 1.01 or
+                                   opt_w >= p['white_noise_level_max'] * 0.99) else "info"
 
-                # Create the successful graph card
-                item_to_append = dbc.Col(
+            # Create the successful graph card
+            item_to_append = dbc.Col(
+                html.Div([
+                    # Metadata Badge Row
                     html.Div([
-                        # Metadata Badge Row
-                        html.Div([
-                            dbc.Badge(f"Scale: {opt_l:.4f}", color=l_color, className="me-1"),
-                            dbc.Badge(f"White Noise: {opt_w:.4f}", color=w_color, className="me-1"),
-                            dbc.Badge(f"σ: {gp_res['jd_peak_std']:.4f}", color="secondary"),
-                        ], style={"textAlign": "center", "marginBottom": "2px"}),
-                        dcc.Graph(
-                            figure=fig,
-                            config={      # type: ignore
-                                'displaylogo': False,
-                                'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d', 'zoomIn2d', 'zoomOut2d']
-                            }
-                        ),
-                    ], style={"border": "1px solid #eee", "padding": "5px", "borderRadius": "5px"}),
-                    width=6, className="px-1 mb-2"  # "px-1" reduces horizontal padding between columns
-                )
+                        dbc.Badge(f"Scale: {opt_l:.4f}", color=l_color, className="me-1"),
+                        dbc.Badge(f"White Noise: {opt_w:.4f}", color=w_color, className="me-1"),
+                        dbc.Badge(f"σ: {gp_res['jd_peak_std']:.4f}", color="secondary"),
+                    ], style={"textAlign": "center", "marginBottom": "2px"}),
+                    dcc.Graph(
+                        figure=fig,
+                        config={  # type: ignore
+                            'displaylogo': False,
+                            'modeBarButtonsToRemove': ['pan2d', 'lasso2d', 'select2d', 'zoomIn2d', 'zoomOut2d']
+                        }
+                    ),
+                ], style={"border": "1px solid #eee", "padding": "5px", "borderRadius": "5px"}),
+                width=6, className="px-1 mb-2"  # "px-1" reduces horizontal padding between columns
+            )
 
-            except Exception as e:
-                # --- THE SAFETY NET ---
-                logging.error(f"GP Failure at {jd_min}: {str(e)}")
-                logging.error(traceback.format_exc())
+        except Exception as e:
+            # --- THE SAFETY NET ---
+            logging.error(f"GP Failure at {jd_min}: {str(e)}")
+            logging.error(traceback.format_exc())
 
-                err_id = f"err-gp-{str(jd_min).replace('.', '')}"
+            err_id = f"err-gp-{str(jd_min).replace('.', '')}"
 
-                item_to_append = dbc.Col(
-                    html.Div([
-                        dbc.Alert([
-                            html.I(className="bi bi-exclamation-octagon me-2"),
-                            html.B("GP Fit Failed"),
-                            html.Div(f"Interval: {jd_min:.2f} - {jd_max:.2f}",
-                                     style={"fontSize": "0.8rem"}),
-                            html.Hr(),
-                            html.Div("Hover for technical details", id=err_id,
-                                     style={"fontSize": "0.7rem", "cursor": "help"})
-                        ], color="danger", style={"height": "400px", "display": "flex",
-                                                  "flexDirection": "column", "justifyContent": "center",
-                                                  "textAlign": "center"}),
-                        dbc.Tooltip(str(e), target=err_id)
-                    ], style={"padding": "5px"}),
-                    width=6, className="px-1 mb-2"
-                )
+            item_to_append = dbc.Col(
+                html.Div([
+                    dbc.Alert([
+                        html.I(className="bi bi-exclamation-octagon me-2"),
+                        html.B("GP Fit Failed"),
+                        html.Div(f"Interval: {jd_min:.2f} - {jd_max:.2f}",
+                                 style={"fontSize": "0.8rem"}),
+                        html.Hr(),
+                        html.Div("Hover for technical details", id=err_id,
+                                 style={"fontSize": "0.7rem", "cursor": "help"})
+                    ], color="danger", style={"height": "400px", "display": "flex",
+                                              "flexDirection": "column", "justifyContent": "center",
+                                              "textAlign": "center"}),
+                    dbc.Tooltip(str(e), target=err_id)
+                ], style={"padding": "5px"}),
+                width=6, className="px-1 mb-2"
+            )
 
             # Append whatever we created (Graph or Error Alert)
-            figs.append(item_to_append)
-            # Spit out the current list of figures to the UI
-            # This updates the 'progress' Output (graphs-container) immediately
-            set_progress([figs])
 
-    return figs
+        live_figs.append(item_to_append)
+
+        # 3. Update the Live UI immediately
+        set_progress((live_figs, "WAITING"))
+
+    # --- FINAL PHASE ---(Review) --------------
+    # Now we build the "Review Mode" graphs with checkboxes
+    review_figs = []
+    numeric_data = []  # we do not want to store figures
+
+    for i, res in enumerate(results_for_storage):
+        # Build the Review UI
+        review_figs.append(dbc.Col([
+            html.Div([
+                dbc.Checkbox(id={'type': 'fit-selector', 'index': i}, value=True, label="Keep"),
+                dcc.Graph(figure=res['figure'])  # The saved figure objects
+            ], className="p-2 border rounded")
+        ], width=6))
+
+        # Build the numeric storage (Exclude the 'figure' object!)
+        numeric_data.append({
+            'jd_peak': res['jd_peak'],
+            'jd_peak_std': res['jd_peak_std']
+        })
+
+    return review_figs, "FINISHED", numeric_data
+
+
+@callback(
+    # region unfold me
+    Output({'type': 'float-input', 'index': ALL}, 'value'),
+    Output('guess-sigma', 'value'),
+    Input('reset-btn', 'n_clicks'),
+    State({'type': 'float-input', 'index': ALL}, 'id'),
+    prevent_initial_call=True
+    # endregion
+)
+def reset_params(n_clicks, ids):
+    if n_clicks is None:
+        return dash.no_update, dash.no_update
+
+    # 1. Reset floats from the dictionary
+    float_resets = [str(params_float[val_id['index']]) for val_id in ids]
+    # Create a list of return values based on the 'index' stored in the ID
+    # This pulls directly from your global 'params_float' dictionary
+    # 2. Reset the boolean to your default constant
+    return float_resets, GUESS_SIGMA
+
+
+# ---- Download results logic
+
+@callback(
+    Output('export-filename', 'value'),
+    Input('upload-lc', 'filename'),
+    prevent_initial_call=True
+)
+# Build output filename
+def update_default_filename(filename):
+    if filename:
+        # Strip the old extension and add '_maxima.dat'
+        base = filename.rsplit('.', 1)[0]
+        return f"{base}_peaks.dat"
+    return "results_peaks.dat"
+
+
+@callback(
+    # region unfold me
+    Output("download-results", "data"),
+    Input("save-file-btn", "n_clicks"),
+    State("export-filename", "value"),
+    State({'type': 'fit-selector', 'index': ALL}, 'value'),
+    State('store-results-data', 'data'),
+    prevent_initial_call=True
+    # endregion
+)
+def trigger_download(n_clicks, filename_input, selection_mask, results):
+    print(f'------------- downloading {filename_input=} {selection_mask=} {results=}')
+    if not n_clicks or not results:
+        return dash.no_update
+
+    final_filename = filename_input if filename_input else "gp_results_peaks.dat"
+    # Header for the file
+    lines = ["# GP Peak Results\n", "# JD_Peak\tJD_Std\n"]
+    print(lines)
+
+    # Filter by user checkboxes
+    for is_selected, row in zip(selection_mask, results):
+        if is_selected:
+            lines.append(f"{row['jd_peak']:.6f}\t{row['jd_peak_std']:.6f}\n")
+
+    # Send as a downloadable text file
+    return dcc.send_string("".join(lines), final_filename)
+
+
+# -------------- Graphs with fits ---- two containers: Working and Final -----
+
+@callback(
+    # region unfold me
+    Output('final-review-container', 'style'),
+    Output('live-graphs-container', 'style'),
+    Input('finished-signal', 'children'),  # this is a swithch-modes-trigger
+    prevent_initial_call=True
+    # endregion
+)
+def switch_modes(signal):
+    print('--------------- switch_modes triggered by signal', signal)
+    # helper callback to toggle the visibility working and review modes (once run_gp finishes).
+    if signal == "FINISHED":
+        return {'display': 'block'}, {'display': 'none'}
+    return {'display': 'none'}, {'display': 'flex'}
+
+
+@callback(
+    # region unfold me
+    Output({'type': 'fit-selector', 'index': ALL}, 'value'),
+    Input('select-all-btn', 'n_clicks'),
+    Input('unselect-all-btn', 'n_clicks'),
+    State({'type': 'fit-selector', 'index': ALL}, 'value'),
+    prevent_initial_call=True
+    # endregion
+)
+def bulk_toggle_fits(select_clicks, unselect_clicks, current_values):
+    # This is one of the magic Multi-Selection Callbacks
+    # Check which button was actually pressed
+    ctx = callback_context
+    if not ctx.triggered:
+        return current_values
+
+    trigger_id = ctx.triggered[0]['prop_id']
+
+    # We return a list of booleans the same length as the number of checkboxes
+    if 'unselect-all-btn' in trigger_id:
+        return [False] * len(current_values)
+    else:
+        return [True] * len(current_values)
+
