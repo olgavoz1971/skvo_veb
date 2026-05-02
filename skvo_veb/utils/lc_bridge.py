@@ -5,7 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 from astropy import units as u
-from volightcurve import (VOLightCurve, get_time_colnames, get_flux_colnames, get_mag_colnames,
+from skvo_veb.volightcurve import (VOLightCurve, get_time_colnames, get_flux_colnames, get_mag_colnames,
                           get_error_colnames, is_mag_column, is_flux_column)
 
 logger = logging.getLogger(__name__)

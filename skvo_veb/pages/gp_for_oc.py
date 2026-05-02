@@ -173,8 +173,8 @@ Specifically the `GaussianProcessRegressor` module.
 """
 
 import dash
-import diskcache
-from dash import dcc, html, Input, Output, State, ALL, DiskcacheManager, callback_context, callback
+# import diskcache
+from dash import dcc, html, Input, Output, State, ALL, callback_context, callback
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 
@@ -215,9 +215,9 @@ params_float = {
     "amplitude_min": AMPLITUDE_MIN,
     "amplitude_max": AMPLITUDE_MAX,
 }
-# Initialize Diskcache for background callbacks
-cache = diskcache.Cache("./cache")
-background_callback_manager = DiskcacheManager(cache)
+# # Initialize Diskcache for background callbacks
+# cache = diskcache.Cache("./cache")
+# background_callback_manager = DiskcacheManager(cache)
 
 
 def LegendItem(color, label, mode='line'):
