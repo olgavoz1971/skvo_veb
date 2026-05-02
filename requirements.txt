@@ -47,6 +47,11 @@ Flask-Caching==2.3.0
 fonttools==4.54.1
 frozenlist==1.4.1
 fsspec==2024.9.0
+https://soft.g-vo.org/dist/gavoutils-latest.tar.gz
+https://soft.g-vo.org/dist/gavostc-latest.tar.gz
+https://soft.g-vo.org/dist/gavovot-latest.tar.gz
+pyOpenSSL
+docutils
 html5lib==1.1
 idna==3.10
 importlib_metadata==8.5.0
