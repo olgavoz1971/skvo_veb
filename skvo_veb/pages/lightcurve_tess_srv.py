@@ -68,7 +68,7 @@ periodogram_option_input_style = {'width': '100%'}
 periodogram_option_label_style = {'width': '14em', 'font-size': label_font_size}
 
 jd0_tess = 2457000  # btjd format. We can use the construction Time(2000, format="btjd", scale="tbd") directly,
-top_periods_number = 5
+top_periods_number = 50
 
 
 # but this "btjd" is not included in the original astropy.time module and appear after including lightkurve only.

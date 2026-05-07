@@ -1546,7 +1546,8 @@ def handle_selection(_1, selected_data, js_lightcurve):
     left_border, right_border = selected_data['range']['x']
     try:
         lcd = CurveDash.from_serialized(js_lightcurve)
-        lcd.cut(left_border, right_border)
+        # lcd.cut(left_border, right_border)
+        lcd.cut(left_border+jd0, right_border+jd0)
         # if ctx.triggered_id == 'cut_tess_button':
         #     lcd.cut(left_border, right_border)
         # else:
